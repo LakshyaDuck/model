@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +13,11 @@ DEFAULT_PAIR_TOKEN_TTL_MIN = 30
 DEFAULT_MAX_UPLOAD_BYTES = 5 * 1024**3  # 5 GB
 DEFAULT_MAX_ASSETS_PER_SESSION = 200
 MIN_HOOK_SECRET_LEN = 16
+
+# The secret is embedded in the tusd hook URL, so it must survive a URL query
+# round-trip. A base64 secret with "+" arrives here url-decoded as a space and every
+# hook 401s, so only RFC 3986 unreserved characters are accepted.
+_URL_SAFE_SECRET = re.compile(r"^[A-Za-z0-9._~-]+$")
 
 
 class ConfigError(RuntimeError):
@@ -95,6 +101,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if hook_secret and len(hook_secret) < MIN_HOOK_SECRET_LEN:
         errors.append(
             f"HOOK_SECRET must be at least {MIN_HOOK_SECRET_LEN} characters, got {len(hook_secret)}"
+        )
+    elif hook_secret and not _URL_SAFE_SECRET.match(hook_secret):
+        errors.append(
+            "HOOK_SECRET must be URL-safe (A-Z a-z 0-9 . _ ~ -) because it is embedded "
+            "in the tusd hook URL; a value with '+', '/', '=' or spaces is corrupted in "
+            "the query string and every hook would 401. `openssl rand -hex 24` is safe. "
+            "(Notably, Render's Blueprint generateValue produces base64, so do not use "
+            "that generated value directly.)"
         )
 
     default_origin = f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""

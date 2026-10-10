@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from sqlalchemy import text
 
+from backend.config import ConfigError, load_settings
 from backend.db import Database
 from backend.logging_setup import RedactingFilter, install, redact
 
@@ -51,3 +53,28 @@ def test_sqlite_uses_wal_and_waits_for_the_lock(tmp_path):
     with database.engine.connect() as connection:
         assert connection.execute(text("PRAGMA journal_mode")).scalar() == "wal"
         assert connection.execute(text("PRAGMA busy_timeout")).scalar() == 5000
+
+
+def _env(secret: str) -> dict[str, str]:
+    return {
+        "PUBLIC_BASE_URL": "https://capture.example.org",
+        "DATA_DIR": "/data",
+        "HOOK_SECRET": secret,
+    }
+
+
+def test_hex_hook_secret_is_accepted():
+    # openssl rand -hex 24: what we tell people to use.
+    assert load_settings(_env("9f2c" * 12)).hook_secret == "9f2c" * 12
+
+
+def test_base64_hook_secret_is_rejected_because_query_decoding_mangles_it():
+    # Render's Blueprint generateValue mints a base64 value; "+" becomes " " in the
+    # hook URL query string, so the hook would 401 on every call. Fail at startup.
+    with pytest.raises(ConfigError, match="URL-safe"):
+        load_settings(_env("dGhpcyArIGhhcyArIHBsdXM="))
+
+
+def test_short_hook_secret_is_rejected():
+    with pytest.raises(ConfigError, match="at least"):
+        load_settings(_env("too-short"))

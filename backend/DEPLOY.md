@@ -16,7 +16,7 @@ You write docker-compose and the proxy config; this file lists what they must co
 | --- | --- | --- | --- |
 | `PUBLIC_BASE_URL` | yes | `https://capture.example.org` | No trailing slash. Used to build `phone_url` = `PUBLIC_BASE_URL + /m/<pair_token>`. Must be the origin users actually visit, not an internal container name. |
 | `DATA_DIR` | yes | `/data` | Must be the **same volume** tusd writes to. Must be writable by both containers (same uid, or a shared group). |
-| `HOOK_SECRET` | yes | `openssl rand -hex 24` | ≥ 16 chars. Shared with tusd via the hook URL. |
+| `HOOK_SECRET` | yes | `openssl rand -hex 24` | ≥ 16 chars, **URL-safe** (A-Z a-z 0-9 . _ ~ -). Shared with tusd via the hook URL. |
 | `PAIR_TOKEN_TTL_MIN` | no (30) | `45` | How long a scanned QR stays valid. Re-issue refreshes it. |
 | `MAX_UPLOAD_BYTES` | no (5368709120) | `5368709120` | Keep **identical** to tusd's `-max-size`. Enforced in both places. |
 | `MAX_ASSETS_PER_SESSION` | no (200) | `200` | Counted at upload creation. |
@@ -32,6 +32,23 @@ to `.env` and fill in the values.
 **Only `HOOK_SECRET`.** It is the one value that must go in your secret manager /
 compose `env_file` and must never be committed. `PUBLIC_BASE_URL`, `DATA_DIR`, and the
 tuning knobs are configuration, not secrets.
+
+Generate it once, on whatever machine you like, and give the **same value to both
+services** — a mismatch makes every hook 401:
+
+```sh
+openssl rand -hex 24        # 48 hex chars, always URL-safe
+```
+
+It must be **URL-safe** (A-Z a-z 0-9 . _ ~ -). The secret is embedded in the tusd hook
+URL, and a `+` (which base64 contains) is decoded as a space in a query string, so the
+hook would fail. Startup rejects a non-URL-safe secret with a message saying so. In
+particular, **Render's Blueprint `generateValue: true` produces base64 — do not use that
+generated value directly.** On Render, either set the dashboard/synced value to your own
+hex secret on both services, or put the secret in an Environment Group linked to both.
+The two services can also share one generated value without you handling it, but only if
+that value is URL-safe.
+
 
 | Value | Where it lives | If it leaks |
 | --- | --- | --- |
