@@ -25,10 +25,14 @@ ENV DATA_DIR=/data
 ENV PATH="/app/.venv/bin:$PATH"
 RUN mkdir -p /data
 VOLUME ["/data"]
+# Advisory only. Render (and most PaaS) route to the port in $PORT, which overrides
+# this; docker-compose falls back to 8000.
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \
-    CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz')"
+    CMD ["python", "-c", "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8000')+'/healthz')"]
 
-# Single process on purpose: the SSE broker and the tus hook state are in memory.
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Bind 0.0.0.0:$PORT so the same image works on Render (PORT=10000) and compose (8000).
+# ONE process on purpose: the SSE broker and the tus hook state live in memory, so
+# never add --workers.
+CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -196,3 +196,34 @@ Keep the endpoint unreachable from outside regardless: it is the only way in tha
 - **Thumbnails are best effort.** ffmpeg/Pillow failures are logged and leave `thumb_path` null.
 - **Single process only.** The SSE broker is in memory; do not run multiple API workers.
 - **Phase 1 scope.** No accounts, no normalisation, no frame extraction, no reconstruction.
+
+## 8. Render specifics
+
+This section records why Render is *not* the host. The chosen deployment is a plain
+free-tier VM running the two-container compose layout from §2–§5 as-is. Keep this section
+so nobody re-discovers the trap later.
+
+Render does not map onto the two-container compose layout in §2–§5. Three platform
+rules decide the topology, and all three point the same way:
+
+1. **One public HTTP port per web service.** Render injects `PORT` (default `10000`) and
+   scans *that* port; a container that only listens on `8000` is invisible. The image now
+   binds `0.0.0.0:$PORT`, and you must set the health check path to `/healthz` (there is no
+   `/` route). You still cannot expose the API and tusd as two paths on one service — only
+   one port is reachable.
+2. **A persistent disk attaches to exactly one service and is not shared.** So "API service
+   + tusd service, shared volume" is impossible: two services have two disks, and the
+   `post-finish` rename from `/data/tus` to `/data/sessions` crosses filesystems and fails.
+3. **The Free compute plan has no disks and an ephemeral filesystem.** Local files (the
+   SQLite DB *and* all media) are lost on every deploy, restart, and 15-minute idle
+   spin-down. Do not run this backend on a Free web service.
+
+Net: on Render this belongs in **one web service** running the API, tusd, *and* a small
+reverse proxy that listens on `$PORT` (routes `/files/*` → tusd locally, blocks `/internal/*`,
+forwards everything else to the API), with a single **paid** instance and one persistent
+disk mounted at `/data`. That is also the only way item 1 and item 2 both hold. A Render
+Blueprint can express the service and the disk; it cannot express a second shareable volume.
+
+`HOOK_SECRET` must be the same URL-safe value everywhere (§1a). If tusd runs in the same
+container, its hook URL is just `http://127.0.0.1:8000/internal/tusd-hook?secret=$HOOK_SECRET`
+and never needs to leave the box.
