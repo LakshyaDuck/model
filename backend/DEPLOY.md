@@ -24,6 +24,44 @@ You write docker-compose and the proxy config; this file lists what they must co
 
 Missing or malformed values fail at startup with a message naming the variable; nothing is guessed and no localhost is ever assumed.
 
+There is a ready-made, non-secret template in [`.env.example`](.env.example) — copy it
+to `.env` and fill in the values.
+
+## 1a. What is actually a secret
+
+**Only `HOOK_SECRET`.** It is the one value that must go in your secret manager /
+compose `env_file` and must never be committed. `PUBLIC_BASE_URL`, `DATA_DIR`, and the
+tuning knobs are configuration, not secrets.
+
+| Value | Where it lives | If it leaks |
+| --- | --- | --- |
+| `HOOK_SECRET` | env, shared with tusd | anyone who can reach `/internal/tusd-hook` can forge uploads. Rotate it in both places. |
+| owner token | generated per session, returned once, stored **hashed** | full read access to that session. Rotate by creating a new session. |
+| pair token | generated, stored **hashed**, short lived | upload-only, into one session, until it expires. |
+| the SQLite DB + `DATA_DIR` | the volume | contains token **hashes** (not tokens) and the uploaded media. The media is the sensitive part: protect the volume. |
+
+What the code does so these do not leak by accident:
+
+- **Access logs are redacted.** The hook secret rides in the tusd hook URL, the owner
+  token can ride in `?token=`, and the pair token is a URL path segment (`/m/<token>`).
+  `logging_setup.py` rewrites `secret=…`, `token=…`, `/m/<token>` and
+  `/api/pair/<token>` to `REDACTED` on every log record, so `uvicorn`'s access log and
+  anything scraping it never sees a usable credential.
+- **Only hashes are stored** for owner/pair tokens (SHA-256, `hmac.compare_digest` on
+  lookup), so a copied `app.db` cannot be replayed.
+- **The hook secret is compared with `hmac.compare_digest`**, not `==`.
+- The startup log prints `data_dir`, `base_url`, and `cors` — **not** `hook_secret`.
+
+Still on you:
+
+- **tusd logs its own hook URL, secret included,** as its first startup line
+  (`Using 'http://…/internal/tusd-hook?secret=…'`). There is no flag to redact it.
+  Treat the tusd container's **startup** log as sensitive, or point `-hooks-http` at a
+  URL whose secret is injected by the proxy instead (see §6).
+- Do not put `HOOK_SECRET` on a public command line that ends up in shell history; pass
+  it through the compose file / env.
+- Do not publish `/metrics` (tusd) or `/internal/*` (API) — see §5.
+
 ## 2. Ports
 
 | Service | Container port | Public? |

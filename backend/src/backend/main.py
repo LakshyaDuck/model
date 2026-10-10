@@ -16,6 +16,7 @@ from .config import ConfigError, Settings, load_settings
 from .db import Database
 from .events import Broker
 from .hooks import router as hooks_router
+from .logging_setup import install as install_log_redaction
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ DEV_PAGES = Path(__file__).resolve().parents[2] / "dev_pages"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    # Redact tokens/hook secret before uvicorn can log a request path or query string.
+    install_log_redaction()
     # Read early so CORS is correct; a bad environment still fails loudly in lifespan.
     resolved = settings
     if resolved is None:
@@ -51,7 +54,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=resolved.cors_origins if resolved else ["*"],
+        # Fail closed if the environment was unreadable: the app dies in lifespan
+        # anyway, and a silent "*" is not something a misconfigured deploy should get.
+        allow_origins=resolved.cors_origins if resolved else [],
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
