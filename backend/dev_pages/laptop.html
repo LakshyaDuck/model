@@ -1,0 +1,128 @@
+<!doctype html>
+<!-- DEV ONLY throwaway page. The real React frontend replaces this. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DEV laptop — capture session</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; max-width: 1000px; }
+      .row { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
+      #qr { background: #fff; padding: 8px; border: 1px solid #ddd; }
+      button { font: inherit; padding: 6px 12px; }
+      #assets { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+      figure { margin: 0; width: 170px; }
+      img, video { width: 170px; height: 120px; object-fit: cover; background: #eee; }
+      figcaption { font-size: 11px; word-break: break-all; }
+      .stored { color: #b60; } .ready { color: #070; } .failed { color: #c00; }
+    </style>
+  </head>
+  <body>
+    <h1>DEV ONLY — laptop</h1>
+    <div class="row">
+      <div>
+        <button id="new">New session</button>
+        <button id="refresh">New QR</button>
+        <p>Session <code id="session"></code><br />Owner token <code id="owner"></code></p>
+        <p id="expires"></p>
+      </div>
+      <div>
+        <p>Scan with your phone:</p>
+        <div id="qr"></div>
+        <p><a id="phone" href="#">phone page</a></p>
+      </div>
+    </div>
+    <h2>Assets (<span id="count">0</span>) — <span id="conn">disconnected</span></h2>
+    <div id="assets"></div>
+
+    <script>
+      const assets = new Map();
+      let sessionId = null;
+      let ownerToken = null;
+      let source = null;
+
+      const el = (id) => document.getElementById(id);
+      const auth = () => ({ Authorization: "Bearer " + ownerToken });
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, { ...options, headers: { ...auth(), ...(options.headers || {}) } });
+        if (!response.ok) throw new Error(path + " -> " + response.status);
+        return response.json();
+      }
+
+      async function newSession() {
+        const created = await fetch("/api/sessions", { method: "POST" }).then((r) => r.json());
+        ownerToken = created.owner_token;
+        sessionId = created.session_id;
+        localStorage.setItem("devSession", JSON.stringify(created));
+        el("owner").textContent = ownerToken;
+        showQr(created.phone_url, created.pair_expires_at);
+        subscribe();
+      }
+
+      async function refreshQr() {
+        const rotated = await api(`/api/sessions/${sessionId}/pair-token`, { method: "POST" });
+        showQr(rotated.phone_url, rotated.pair_expires_at);
+      }
+
+      function showQr(url, expiresAt) {
+        el("qr").innerHTML = "";
+        new QRCode(el("qr"), { text: url, width: 180, height: 180 });
+        el("phone").href = url;
+        el("expires").textContent = "Pair token expires " + expiresAt;
+      }
+
+      function subscribe() {
+        if (source) source.close();
+        source = new EventSource(`/api/sessions/${sessionId}/events?token=${encodeURIComponent(ownerToken)}`);
+        source.onopen = () => (el("conn").textContent = "live");
+        source.onerror = () => (el("conn").textContent = "reconnecting…");
+        source.addEventListener("snapshot", (event) => {
+          assets.clear();
+          JSON.parse(event.data).assets.forEach(upsert);
+          render();
+        });
+        for (const name of ["asset.created", "asset.stored", "asset.ready", "asset.failed"]) {
+          source.addEventListener(name, (event) => { upsert(JSON.parse(event.data)); render(); });
+        }
+        source.addEventListener("asset.removed", (event) => {
+          assets.delete(JSON.parse(event.data).id);
+          render();
+        });
+      }
+
+      function upsert(asset) { assets.set(asset.id, asset); }
+
+      function render() {
+        el("count").textContent = assets.size;
+        el("assets").innerHTML = "";
+        for (const asset of [...assets.values()].reverse()) {
+          const card = document.createElement("figure");
+          const base = `/api/sessions/${asset.session_id}/assets/${asset.id}`;
+          const media = asset.thumb_path
+            ? `<img src="${base}/thumb?token=${ownerToken}" alt="">`
+            : `<video src="${base}/file?token=${ownerToken}" muted controls playsinline></video>`;
+          card.innerHTML =
+            `${media}<figcaption class="${asset.status}">${asset.status} · ${asset.kind}<br>` +
+            `${asset.original_filename}<br>${asset.size_bytes} B` +
+            (asset.error_reason ? `<br>${asset.error_reason}` : "") + `</figcaption>`;
+          el("assets").append(card);
+        }
+      }
+
+      el("new").onclick = () => newSession().catch((e) => alert(e.message));
+      el("refresh").onclick = () => refreshQr().catch((e) => alert(e.message));
+
+      const saved = localStorage.getItem("devSession");
+      if (saved) {
+        const created = JSON.parse(saved);
+        ownerToken = created.owner_token;
+        sessionId = created.session_id;
+        el("owner").textContent = ownerToken;
+        showQr(created.phone_url, created.pair_expires_at);
+        subscribe();
+      }
+    </script>
+  </body>
+</html>

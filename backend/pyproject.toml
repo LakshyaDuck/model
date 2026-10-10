@@ -1,18 +1,29 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Phase 1 capture backend: pairing, resumable tus uploads, per-session manifest"
 authors = [
     { name = "LakshyaDuck", email = "lakshyasaini@duck.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
     "fastapi[standard]>=0.141.1",
+    "sqlmodel>=0.0.30",
+    "sse-starlette>=2.4.1",
+    "pillow>=11.0.0",
 ]
 
-[project.scripts]
-backend = "backend:main"
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

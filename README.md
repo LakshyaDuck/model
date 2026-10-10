@@ -1,33 +1,27 @@
 # Model
 
-Minimal camera app: a Vite + React frontend that captures photos and video in the
-browser and uploads them to a FastAPI backend.
+3D room reconstruction, one stage at a time.
 
 ## Layout
 
+- `backend/` — phase 1 capture backend (FastAPI + tusd). See [backend/README.md](backend/README.md)
+  for running it, testing it, and [backend/DEPLOY.md](backend/DEPLOY.md) for deployment.
 - `frontend/` — Vite + React (JavaScript, no TypeScript)
-- `backend/` — FastAPI
 
-## Run
+## Phase 1 (backend)
 
-Backend:
+The laptop creates a session and shows a QR code, the phone scans it and uploads
+video/photos through tus, and the server produces a per-session folder plus a
+`manifest.json` for the next stage. Two throwaway dev pages
+(`/dev/laptop` and `/m/<pair_token>`) exercise the whole flow before the real
+frontend exists.
 
 ```sh
 cd backend
-uv run fastapi dev main.py
+uv sync
+uv run uvicorn backend.main:app --reload   # needs PUBLIC_BASE_URL, DATA_DIR, HOOK_SECRET
+uv run pytest
 ```
 
-Frontend:
-
-```sh
-cd frontend
-pnpm install
-pnpm dev
-```
-
-Open http://localhost:5173. The camera prompt requires a secure context, so use
-`localhost` rather than a LAN IP over plain HTTP. Frontend commands are
-`pnpm dev`, `pnpm build`, and `pnpm lint`.
-
-Captures land in `backend/uploads/`. The backend allows CORS from
-`http://localhost:5173` only; set `VITE_API_URL` to point elsewhere.
+The previous plain `POST /upload` endpoint and `backend/uploads/` are gone; uploads
+now go through tusd.

@@ -1,0 +1,129 @@
+<!doctype html>
+<!-- DEV ONLY throwaway page. The real React frontend replaces this. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DEV phone — send to room</title>
+    <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.3.1/dist/tus.min.js"></script>
+    <style>
+      body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; }
+      h1 { font-size: 18px; } h2 { font-size: 14px; text-transform: uppercase; color: #666; }
+      button, label.pick { display: block; width: 100%; box-sizing: border-box; font: inherit;
+        padding: 14px; margin: 8px 0; border: 1px solid #ccc; border-radius: 10px; background: #fff; }
+      label.pick:active { background: #eee; }
+      input[type=file] { display: none; }
+      .item { border-top: 1px solid #eee; padding: 10px 0; }
+      .name { font-size: 13px; word-break: break-all; }
+      progress { width: 100%; height: 10px; }
+      .state { font-size: 12px; color: #666; } .state.error { color: #c00; } .state.done { color: #070; }
+      #status { padding: 10px; border-radius: 8px; background: #f2f2f2; }
+      #status.bad { background: #fee; }
+    </style>
+  </head>
+  <body>
+    <h1>DEV ONLY — send to room</h1>
+    <p id="status">checking QR…</p>
+
+    <h2>Capture</h2>
+    <label class="pick">📹 Take a video or photo
+      <input id="camera" type="file" accept="video/*,image/*" capture="environment" />
+    </label>
+    <label class="pick">🖼 Pick from gallery (multiple)
+      <input id="gallery" type="file" accept="video/*,image/*" multiple />
+    </label>
+
+    <h2>Optional</h2>
+    <label class="pick">📐 Floor plan
+      <input id="floorplan" type="file" accept="image/*,application/pdf" />
+    </label>
+    <label class="pick">📡 Sensor log
+      <input id="sensor" type="file" accept=".json,.csv,.txt,application/json" />
+    </label>
+
+    <h2>Uploads</h2>
+    <div id="list"></div>
+
+    <script>
+      const pairToken = location.pathname.split("/").pop();
+      const list = document.getElementById("list");
+      const status = document.getElementById("status");
+
+      const GUESS = { mov: "video/quicktime", mp4: "video/mp4", webm: "video/webm", m4v: "video/x-m4v",
+        jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", heic: "image/heic", webp: "image/webp",
+        pdf: "application/pdf", json: "application/json", csv: "text/csv", txt: "text/plain" };
+      const mimeOf = (file) =>
+        file.type || GUESS[(file.name.split(".").pop() || "").toLowerCase()] || "";
+
+      // The server only accepts video|photo|floorplan|sensor, so the multi-purpose
+      // gallery picker has to label each file itself.
+      const kindOf = (file) => {
+        const mime = mimeOf(file);
+        if (mime.startsWith("video/")) return "video";
+        if (mime.startsWith("image/")) return "photo";
+        return null;
+      };
+
+      function fail(message) {
+        status.textContent = message;
+        status.classList.add("bad");
+      }
+
+      // Resume what this browser already started, then upload the rest.
+      async function send(file, kind) {
+        if (kind === "auto") kind = kindOf(file);
+        if (!kind) { fail(`Unsupported file type: ${file.name}`); return; }
+
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `<div class="name"></div><progress value="0" max="100"></progress><div class="state">queued</div>`;
+        row.querySelector(".name").textContent = `${kind}: ${file.name} (${file.size} B)`;
+        list.prepend(row);
+        const bar = row.querySelector("progress");
+        const state = row.querySelector(".state");
+
+        const upload = new tus.Upload(file, {
+          endpoint: "/files/",
+          metadata: { pair_token: pairToken, kind, filename: file.name, filetype: mimeOf(file) },
+          chunkSize: 4 * 1024 * 1024,
+          retryDelays: [0, 1000, 3000, 5000, 10000, 20000],
+          removeFingerprintOnSuccess: true,
+          onProgress: (sent, total) => { bar.value = total ? (sent / total) * 100 : 0; },
+          onSuccess: () => { bar.value = 100; state.textContent = "done"; state.className = "state done"; },
+          onError: (error) => {
+            // 403/410 mean the QR aged out; retrying cannot help.
+            state.textContent = error.message || "failed";
+            state.className = "state error";
+          },
+        });
+        state.textContent = "uploading";
+        const previous = await upload.findPreviousUploads();
+        if (previous.length) upload.resumeFromPreviousUpload(previous[0]);
+        upload.start();
+      }
+
+      const queue = (id, kind) => (event) => {
+        for (const file of event.target.files) send(file, kind);
+        event.target.value = "";
+      };
+      document.getElementById("camera").onchange = queue("camera", "auto");
+      document.getElementById("gallery").onchange = queue("gallery", "auto");
+      document.getElementById("floorplan").onchange = queue("floorplan", "floorplan");
+      document.getElementById("sensor").onchange = queue("sensor", "sensor");
+
+      fetch(`/api/pair/${encodeURIComponent(pairToken)}`)
+        .then((response) => {
+          if (!response.ok) throw new Error(response.status === 410 ? "expired" : "invalid");
+          return response.json();
+        })
+        .then((session) => {
+          status.textContent = `paired with session ${session.session_id.slice(0, 8)}… · QR valid until ${session.expires_at}`;
+        })
+        .catch((error) => fail(
+          error.message === "expired"
+            ? "This QR code has expired. Close this page and scan the new one on the laptop."
+            : "This QR code is not valid. Scan the code currently shown on the laptop."
+        ));
+    </script>
+  </body>
+</html>
