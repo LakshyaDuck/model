@@ -31,6 +31,19 @@ Deploy details (env vars, tusd flags, proxy routing, volume layout) are in
 ## Run locally
 
 Needs `ffmpeg` on `PATH` for video thumbnails, plus a running `tusd` for real uploads.
+`ffmpeg` is a system package; **tusd is not on any distro's default PATH**, so grab the
+binary first:
+
+```sh
+# one-off, to ~/.local/bin (already on most PATHs); use /usr/local/bin if you prefer
+mkdir -p ~/.local/bin
+curl -sL https://github.com/tus/tusd/releases/download/v2.10.1/tusd_linux_amd64.tar.gz \
+  | tar xz -C /tmp tusd_linux_amd64/tusd
+mv /tmp/tusd_linux_amd64/tusd ~/.local/bin/tusd
+tusd -version   # -> Version: v2.10.1
+```
+
+Then start the API (first shell):
 
 ```sh
 uv sync
@@ -38,14 +51,19 @@ export PUBLIC_BASE_URL=http://localhost:8000 DATA_DIR=./data HOOK_SECRET=dev-sec
 uv run uvicorn backend.main:app --reload
 ```
 
-Then, in a second shell, tusd pointed at the same `DATA_DIR`:
+and tusd (second shell) pointed at the same `DATA_DIR`:
 
 ```sh
-tusd -upload-dir ./data/tus -port 1080 -max-size 5368709120 \
+tusd -upload-dir ./data/tus -port 1080 -base-path /files/ -max-size 5368709120 \
   -hooks-enabled-events pre-create,post-create,post-finish,post-terminate \
   -hooks-http "http://127.0.0.1:8000/internal/tusd-hook?secret=dev-secret-please-change" \
   -disable-download -disable-concatenation
 ```
+
+`tusd` must run from the `backend/` directory (or point `-upload-dir` at an absolute
+path) so it shares `DATA_DIR` with the API. The `\` line continuations are bash/zsh
+syntax; in fish, put it on one line. If tusd exits immediately saying the hook endpoint
+is unreachable, the API in the first shell is not up yet — start the API first.
 
 Open <http://localhost:8000/dev/laptop>, press **New session**, scan the QR (or open
 `/m/<pair_token>` in another browser tab), and upload.
