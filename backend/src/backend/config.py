@@ -62,10 +62,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
     errors: list[str] = []
 
-    def require(key: str) -> str:
+    def require(key: str, example: str) -> str:
         value = (env.get(key) or "").strip()
         if not value:
-            errors.append(f"{key} is required (e.g. {key}=...)")
+            errors.append(f"{key} is required (e.g. {example})")
         return value
 
     def positive_int(key: str, default: int) -> int:
@@ -82,7 +82,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             return default
         return value
 
-    base_url = require("PUBLIC_BASE_URL").rstrip("/")
+    base_url = require(
+        "PUBLIC_BASE_URL",
+        "https://capture.example.org — the origin the phone can reach; for local "
+        "testing use the laptop's LAN address (http://192.168.1.20:8000), and on a "
+        "server the VM's public address or a free hostname like https://name.duckdns.org",
+    ).rstrip("/")
     parts = urlsplit(base_url)
     if base_url and (
         parts.scheme not in ("http", "https")
@@ -95,9 +100,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             f"fragment (e.g. https://example.org), got {base_url!r}"
         )
 
-    data_dir = require("DATA_DIR")
+    data_dir = require("DATA_DIR", "/data")
 
-    hook_secret = require("HOOK_SECRET")
+    hook_secret = require("HOOK_SECRET", "run: openssl rand -hex 24")
     if hook_secret and len(hook_secret) < MIN_HOOK_SECRET_LEN:
         errors.append(
             f"HOOK_SECRET must be at least {MIN_HOOK_SECRET_LEN} characters, got {len(hook_secret)}"

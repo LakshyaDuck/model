@@ -21,7 +21,7 @@ src/backend/
   manifest.py    atomic manifest.json writer
   media.py       sha256, safe extensions, thumbnails (ffmpeg / Pillow)
 dev_pages/       DEV ONLY throwaway laptop + phone pages
-scripts/         simulate_upload.py — phone-less upload against a running stack
+scripts/         dev.py — one-command local API+tusd stack; simulate_upload.py — phone-less upload
 tests/           pytest
 ```
 
@@ -43,7 +43,19 @@ mv /tmp/tusd_linux_amd64/tusd ~/.local/bin/tusd
 tusd -version   # -> Version: v2.10.1
 ```
 
-Then start the API (first shell):
+Then the whole local stack in one command:
+
+```sh
+uv run python scripts/dev.py
+```
+
+It starts the API (autoreload) and tusd together, sharing `DATA_DIR` and a dev
+`HOOK_SECRET`, waits for `/healthz` before starting tusd, prints the dev URL, and stops
+both on Ctrl-C. Defaults are `DATA_DIR=./data` and `PUBLIC_BASE_URL=http://localhost:8000`;
+override any of them in the environment, and use `--api-port` / `--tusd-port` / `--no-reload`
+if needed.
+
+Or run the two processes by hand — first the API (shell one):
 
 ```sh
 uv sync
@@ -51,7 +63,7 @@ export PUBLIC_BASE_URL=http://localhost:8000 DATA_DIR=./data HOOK_SECRET=dev-sec
 uv run uvicorn backend.main:app --reload
 ```
 
-and tusd (second shell) pointed at the same `DATA_DIR`:
+Then tusd (shell two), pointed at the same `DATA_DIR`:
 
 ```sh
 tusd -upload-dir ./data/tus -port 1080 -base-path /files/ -max-size 5368709120 \

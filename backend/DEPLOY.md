@@ -227,3 +227,31 @@ Blueprint can express the service and the disk; it cannot express a second share
 `HOOK_SECRET` must be the same URL-safe value everywhere (§1a). If tusd runs in the same
 container, its hook URL is just `http://127.0.0.1:8000/internal/tusd-hook?secret=$HOOK_SECRET`
 and never needs to leave the box.
+
+## 9. Domain, DNS, and TLS
+
+The deployment host is `shares.qzz.io`. `qzz.io` is a DigitalPlat FreeDomain (free
+subdomain) zone served by its own nameservers (`ns1/ns2/ns3.qzz.io`), so it is **not**
+Cloudflare-proxied unless you deliberately move it there.
+
+DNS is not configured yet, and Caddy cannot get a certificate until it is. Order matters:
+
+1. Sign in to the DigitalPlat domain dashboard, open `shares.qzz.io` → **DNS Records**, and
+   add an **`A`** record pointing at the VM's public IPv4 (add `AAAA` only if the VM has
+   IPv6). In that editor the **Name is relative to the zone**: use `@` for `shares.qzz.io`
+   itself — typing the full `shares.qzz.io` fails with "Record names must stay inside this
+   DNS zone". A name like `www` would be `www.shares.qzz.io`. Only the Name must stay
+   in-zone; the value (an IP, or a CNAME target) can point anywhere.
+2. Open inbound `80` and `443` on the VM.
+3. Confirm it resolves *before* starting Caddy: `dig +short shares.qzz.io` must return the
+   VM IP. Caddy's HTTP-01 challenge fails and backs off until it does.
+
+Then set `PUBLIC_BASE_URL=https://shares.qzz.io` (no trailing slash). `CORS_ORIGINS` can
+stay empty — it defaults to that same origin, and the dev pages are same-origin anyway.
+Caddy then fetches and renews the certificate automatically.
+
+Proxying caveat, only if you later put this host behind Cloudflare: a **proxied** (orange)
+record caps request bodies at **100 MB** on Free/Pro and returns `413` for larger tus
+uploads, so use **DNS-only (grey cloud)**. Cloudflare Tunnel has the same cap.
+
+
