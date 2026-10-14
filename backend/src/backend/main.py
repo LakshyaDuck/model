@@ -84,5 +84,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     return app
 
-
+# Create app
 app = create_app()
