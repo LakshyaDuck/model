@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { BrowserQRCodeReader } from '@zxing/browser'
 import { QRCodeCanvas } from 'qrcode.react'
+import {
+  createSession,
+  eventsUrl,
+  fileUrl,
+  thumbUrl,
+} from '../api.js'
 
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+const isLoopback = ['localhost', '127.0.0.1', '::1', ''].includes(window.location.hostname)
+
+const ASSET_EVENTS = ['asset.created', 'asset.stored', 'asset.ready', 'asset.failed']
 
 function Home() {
   const videoRef = useRef(null)
-  const navigate = useNavigate()
   const [error, setError] = useState(null)
   const [started, setStarted] = useState(false)
 
@@ -27,8 +34,8 @@ function Home() {
       const reader = new BrowserQRCodeReader()
       reader.decodeFromVideoElement(videoRef.current, (result) => {
         if (result) {
-          console.log('Scanned:', result.getText())
-          navigate(isMobile ? '/camerapic' : '/_3Drendering')
+          // The QR now encodes the phone URL, so just follow it.
+          navigateToScan(result.getText())
         }
       })
     } catch (err) {
@@ -80,15 +87,97 @@ function Home() {
     )
   }
 
+  return <Laptop />
+}
+
+function navigateToScan(text) {
+  try {
+    const url = new URL(text)
+    if (url.origin === window.location.origin) {
+      window.location.assign(url.pathname + url.search)
+    } else {
+      window.location.assign(url.href)
+    }
+  } catch {
+    // not a URL; ignore
+  }
+}
+
+function Laptop() {
+  const [session, setSession] = useState(null)
+  const [error, setError] = useState(null)
+  const [assets, setAssets] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    createSession()
+      .then((created) => {
+        if (!cancelled) setSession(created)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!session) return
+    const source = new EventSource(eventsUrl(session.session_id, session.owner_token))
+
+    const upsert = (event) => {
+      const asset = JSON.parse(event.data)
+      setAssets((prev) => [...prev.filter((a) => a.id !== asset.id), asset])
+    }
+    const remove = (event) => {
+      const { id } = JSON.parse(event.data)
+      setAssets((prev) => prev.filter((a) => a.id !== id))
+    }
+
+    source.addEventListener('snapshot', (event) => {
+      setAssets(JSON.parse(event.data).assets)
+    })
+    for (const name of ASSET_EVENTS) source.addEventListener(name, upsert)
+    source.addEventListener('asset.removed', remove)
+    return () => source.close()
+  }, [session])
+
+  const phoneUrl = session ? `${window.location.origin}/phone/${session.pair_token}` : ''
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-fuchsia-600 to-pink-500 flex items-center justify-center p-6">
       <div className="bg-white rounded-2xl shadow-2xl p-10 flex flex-col items-center max-w-md w-full">
         <h1 className="text-3xl font-extrabold text-gray-800 mb-2">3D Scanner</h1>
         <p className="text-gray-500 text-center mb-6">Scan this QR code with your phone to start scanning</p>
 
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-center w-full mb-4">
+            {error}
+          </div>
+        )}
+
+        {isLoopback && (
+          <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-xl p-4 text-sm text-center w-full mb-4">
+            You opened this page on <code>localhost</code>, so the QR points at an
+            address your phone cannot reach. Open the LAN address Vite printed instead
+            (e.g. <code>http://192.168.x.x:5173</code>).
+          </div>
+        )}
+
         <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-inner">
-          <QRCodeCanvas value="have to add session id send by backend" size={220} />
+          {phoneUrl ? (
+            <QRCodeCanvas value={phoneUrl} size={220} />
+          ) : (
+            <div className="w-[220px] h-[220px] flex items-center justify-center text-gray-400">
+              creating session…
+            </div>
+          )}
         </div>
+
+        {session && (
+          <p className="text-xs text-gray-400 mt-3 break-all text-center">{phoneUrl}</p>
+        )}
 
         <div className="mt-6 text-sm text-gray-600 space-y-2 text-left w-full bg-pink-50 rounded-xl p-4">
           <p className="font-semibold text-fuchsia-700">Instructions:</p>
@@ -97,6 +186,47 @@ function Home() {
           <p>3. Follow the instructions given on your phone.</p>
           <p>4. Here you will see the 3D rendered image of the photo.</p>
         </div>
+
+        {session && (
+          <div className="mt-6 w-full">
+            <h2 className="text-sm font-semibold text-gray-700 mb-2">
+              Received ({assets.length})
+            </h2>
+            {assets.length === 0 ? (
+              <p className="text-xs text-gray-400">Nothing yet — uploads appear here live.</p>
+            ) : (
+              <ul className="space-y-2">
+                {assets.map((asset) => (
+                  <li key={asset.id} className="flex items-center gap-3 bg-gray-50 rounded-lg p-2">
+                    {asset.kind === 'photo' && asset.thumb_path ? (
+                      <img
+                        src={thumbUrl(session.session_id, asset.id, session.owner_token)}
+                        alt=""
+                        className="w-12 h-12 object-cover rounded"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded bg-gray-200 flex items-center justify-center text-xs text-gray-500">
+                        {asset.kind}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs truncate text-gray-700">{asset.original_filename}</p>
+                      <p className="text-[11px] text-gray-400">{asset.status}</p>
+                    </div>
+                    <a
+                      href={fileUrl(session.session_id, asset.id, session.owner_token)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-fuchsia-600 hover:underline"
+                    >
+                      open
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -18,6 +18,7 @@ import argparse
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -57,6 +58,19 @@ def wait_for(url: str, timeout: float = 20.0) -> bool:
     return False
 
 
+def detect_lan_ip() -> str | None:
+    """The address of the interface on the default route — what a phone on the same
+    network (or on this machine's hotspot) can reach. None if it cannot be determined."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        sock.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-port", type=int, default=8000)
@@ -68,7 +82,9 @@ def main() -> int:
     data_dir = Path(os.environ.get("DATA_DIR") or BACKEND_DIR / "data").expanduser().resolve()
     tus_dir = data_dir / "tus"
     secret = os.environ.get("HOOK_SECRET") or DEFAULT_SECRET
-    base_url = os.environ.get("PUBLIC_BASE_URL") or f"http://localhost:{args.api_port}"
+    lan_ip = detect_lan_ip()
+    fallback = f"http://{lan_ip}:{args.api_port}" if lan_ip else f"http://localhost:{args.api_port}"
+    base_url = os.environ.get("PUBLIC_BASE_URL") or fallback
     max_bytes = os.environ.get("MAX_UPLOAD_BYTES") or str(DEFAULT_MAX_UPLOAD_BYTES)
 
     tusd = find_tusd()
@@ -94,6 +110,9 @@ def main() -> int:
         "-port", str(args.tusd_port),
         "-base-path", "/files/",
         "-max-size", max_bytes,
+        # The Vite dev server proxies /files, so tusd must trust X-Forwarded-* to
+        # mint upload URLs on the origin the phone sees (not 127.0.0.1:1080).
+        "-behind-proxy",
         "-hooks-enabled-events", "pre-create,post-create,post-finish,post-terminate",
         "-hooks-http", f"http://127.0.0.1:{args.api_port}/internal/tusd-hook?secret={secret}",
         "-disable-download",
@@ -124,8 +143,10 @@ def main() -> int:
     signal.signal(signal.SIGTERM, shutdown)
 
     print(f"  DATA_DIR  {data_dir}")
-    print(f"  API       {base_url}")
-    print(f"  dev page  {base_url}/dev/laptop")
+    print(f"  laptop    {base_url}/dev/laptop")
+    if lan_ip:
+        print(f"  phone     scan the QR at {base_url}/dev/laptop")
+        print(f"            (PUBLIC_BASE_URL={base_url}; the QR points the phone here)")
     print(f"  tusd      http://127.0.0.1:{args.tusd_port}/files/")
     print("\nstarting API (waiting for /healthz)...", flush=True)
 

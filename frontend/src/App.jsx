@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom'
 import './App.css'
 import Home from './pages/home.jsx'
 import CameraPic from './pages/camerapic.jsx'
+import Phone from './pages/phone.jsx'
 
 function Rendering3D() {
   return <h1>3D Rendering Page</h1>
@@ -13,6 +14,7 @@ function App() {
     <>
       <Routes>
         <Route path="/" element={<Home />}/>
+        <Route path="/phone/:token" element={<Phone />}/>
         <Route path="/camerapic" element={<CameraPic />}/>
         <Route path="/_3Drendering" element={<Rendering3D />}/>
       </Routes>

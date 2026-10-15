@@ -51,8 +51,10 @@ uv run python scripts/dev.py
 
 It starts the API (autoreload) and tusd together, sharing `DATA_DIR` and a dev
 `HOOK_SECRET`, waits for `/healthz` before starting tusd, prints the dev URL, and stops
-both on Ctrl-C. Defaults are `DATA_DIR=./data` and `PUBLIC_BASE_URL=http://localhost:8000`;
-override any of them in the environment, and use `--api-port` / `--tusd-port` / `--no-reload`
+both on Ctrl-C. Defaults are `DATA_DIR=./data` and `PUBLIC_BASE_URL=http://<lan-ip>:8000`,
+where the IP is auto-detected from the default route so a phone on the same Wi-Fi (or on
+this laptop's hotspot) can scan the QR; it falls back to `localhost` if detection fails.
+Override any of them in the environment, and use `--api-port` / `--tusd-port` / `--no-reload`
 if needed.
 
 Or run the two processes by hand — first the API (shell one):
