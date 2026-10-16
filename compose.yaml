@@ -1,0 +1,87 @@
+name: namma-space
+
+# Local, single-origin deployment. Caddy is the only published service; the API,
+# tusd, and COLMAP worker communicate on Docker's private network and share the
+# one named volume required for atomic upload finalisation.
+services:
+  gateway:
+    image: caddy:2.10.2-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      tusd:
+        condition: service_started
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env}
+      DATA_DIR: /data
+      HOOK_SECRET: ${HOOK_SECRET:?set HOOK_SECRET in .env}
+      PAIR_TOKEN_TTL_MIN: ${PAIR_TOKEN_TTL_MIN:-30}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-5368709120}
+      MAX_ASSETS_PER_SESSION: ${MAX_ASSETS_PER_SESSION:-200}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+    volumes:
+      - capture-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  tusd:
+    image: tus/tusd:v2.10.1
+    command:
+      - -host=0.0.0.0
+      - -port=1080
+      - -upload-dir=/data/tus
+      - -base-path=/files/
+      - -max-size=${MAX_UPLOAD_BYTES:-5368709120}
+      - -hooks-enabled-events=pre-create,post-create,post-finish,post-terminate
+      - -hooks-http=http://api:8000/internal/tusd-hook?secret=${HOOK_SECRET:?set HOOK_SECRET in .env}
+      - -hooks-http-timeout=300s
+      - -hooks-http-retry=3
+      - -disable-download
+      - -disable-concatenation
+      - -behind-proxy
+      - -network-timeout=300s
+      - -expose-metrics=false
+    volumes:
+      - capture-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # A one-shot, on-demand reconstruction worker. It is deliberately not started
+  # by `up`: COLMAP is CPU/GPU intensive and must never compete with mobile uploads.
+  # `docker compose --profile reconstruction run --rm colmap --session <id>`
+  # automatically downloads the official COLMAP image the first time it is used.
+  colmap:
+    image: ${COLMAP_IMAGE:-colmap/colmap:latest}
+    profiles: [reconstruction]
+    entrypoint: ["bash", "/workspace/reconstruct.sh"]
+    command: ["--help"]
+    volumes:
+      - capture-data:/data
+      - ./scripts/reconstruct.sh:/workspace/reconstruct.sh:ro
+
+volumes:
+  capture-data:
+

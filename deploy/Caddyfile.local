@@ -1,0 +1,36 @@
+{
+	# This file is for local HTTP development. The production Caddyfile should use
+	# a real hostname and TLS, but preserve these routing and isolation rules.
+	auto_https off
+}
+
+:80 {
+	@private path /internal/* /metrics*
+	respond @private 404
+
+	# Do not add request buffering here: tus PATCH bodies must stream to tusd so
+	# interrupted phone uploads remain resumable.
+	handle /files/* {
+		reverse_proxy tusd:1080 {
+			flush_interval -1
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	# Retains compatibility with the existing backend's development phone page.
+	handle /m/* {
+		reverse_proxy api:8000
+	}
+
+	handle /healthz {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+}
+
