@@ -11,6 +11,10 @@ dependencies = [
     "sqlmodel>=0.0.30",
     "sse-starlette>=2.4.1",
     "pillow>=11.0.0",
+    "opencv-python>=4.10.0",
+    "numpy>=2.0",
+    "open3d>=0.20.0",
+    "trimesh>=5.1.1",
 ]
 
 [dependency-groups]

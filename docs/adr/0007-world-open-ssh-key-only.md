@@ -1,3 +1,7 @@
-# SSH is key-only and world-reachable
+# Superseded — public VM SSH policy
 
-The VM security list allows 22, 80, and 443 from `0.0.0.0/0`. Password SSH is off. 80/443 must be public so any phone can hit the public origin; 22 stays public so you can SSH from campus or mobile, not only one home IP.
+**Status:** Superseded on 2026-10-17 by
+[ADR 0008](0008-local-only-pending-hosting.md).
+
+There is no public VM in the current local-first plan, so no SSH exposure or cloud
+security-list policy is required. Define a fresh access policy if hosting is resumed.

@@ -18,6 +18,12 @@ FAILED = "asset.failed"
 REMOVED = "asset.removed"
 SNAPSHOT = "snapshot"
 
+# Process-button job lifecycle (see processing.py).
+JOB_STARTED = "job.started"
+JOB_PROGRESS = "job.progress"
+JOB_DONE = "job.done"
+JOB_FAILED = "job.failed"
+
 
 class Broker:
     def __init__(self) -> None:

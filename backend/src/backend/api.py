@@ -125,6 +125,27 @@ async def get_manifest(
         return manifest_payload(db, session_id)
 
 
+@router.post("/sessions/{session_id}/process", status_code=202)
+async def start_processing(
+    session_id: str,
+    request: Request,
+    _: CaptureSession = Depends(require_owner()),
+) -> dict:
+    """Starts the OpenCV pass over this session's photos and videos. Returns at once;
+    the caller follows progress on the session's SSE stream (job.* events)."""
+    return await request.app.state.processing.start(request.app, session_id)
+
+
+@router.get("/sessions/{session_id}/process")
+async def get_processing(
+    session_id: str,
+    request: Request,
+    _: CaptureSession = Depends(require_owner()),
+) -> dict:
+    settings: Settings = request.app.state.settings
+    return request.app.state.processing.status(settings, session_id)
+
+
 @router.get("/sessions/{session_id}/events")
 async def stream_events(
     request: Request, capture: CaptureSession = Depends(require_owner(allow_query_token=True))

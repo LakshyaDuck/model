@@ -1,3 +1,7 @@
-# OCI home region is Mumbai
+# Superseded — OCI home region
 
-Always Free compute exists only in the tenancy home region, which is chosen at signup and cannot be moved. We pick **India West (Mumbai)** (`ap-mumbai-1`) so the phone and laptop are close. If Ampere is out of capacity, retry another availability domain in Mumbai; do not create the tenancy in a US region for stock.
+**Status:** Superseded on 2026-10-17 by
+[ADR 0008](0008-local-only-pending-hosting.md).
+
+The project will not create an OCI tenancy because signup requires a credit card.
+No OCI region is selected.

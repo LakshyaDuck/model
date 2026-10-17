@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
 
   tusd:
-    image: tus/tusd:v2.10.1
+    image: tusproject/tusd:v2.10.1
     command:
       - -host=0.0.0.0
       - -port=1080

@@ -1,0 +1,453 @@
+openapi: 3.0.3
+info:
+  title: Namma Space Capture API
+  version: 0.1.0
+  description: |
+    Source of truth for the public browser-to-capture-service boundary.
+    Update this contract with any public API change and keep frontend/src/api.js
+    and backend/src/backend/api.py aligned with it.
+servers:
+  - url: http://localhost:8080
+    description: Local Docker gateway
+  - url: http://localhost:8000
+    description: Direct FastAPI development server
+tags:
+  - name: sessions
+    description: Create and manage a room-capture session.
+  - name: pairing
+    description: Validate the short-lived phone pairing token.
+  - name: assets
+    description: Read uploaded session files and thumbnails.
+  - name: processing
+    description: Start and observe preparation of uploaded media.
+
+paths:
+  /api/sessions:
+    post:
+      tags: [sessions]
+      operationId: createSession
+      summary: Create a capture session
+      responses:
+        "201":
+          description: Session and one-time tokens created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCreated"
+
+  /api/sessions/{session_id}/pair-token:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [sessions]
+      operationId: reissuePairToken
+      summary: Rotate a session's phone pairing token
+      security:
+        - ownerToken: []
+      responses:
+        "200":
+          description: Replacement pairing token and phone URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairTokenIssued"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/pair/{pair_token}:
+    parameters:
+      - $ref: "#/components/parameters/PairToken"
+    get:
+      tags: [pairing]
+      operationId: checkPairToken
+      summary: Validate a phone pairing token for upload setup
+      responses:
+        "200":
+          description: Pairing token is valid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairTokenValidated"
+        "404":
+          $ref: "#/components/responses/PairTokenNotFound"
+        "410":
+          $ref: "#/components/responses/PairTokenExpired"
+
+  /api/sessions/{session_id}/manifest:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [sessions]
+      operationId: getSessionManifest
+      summary: Get the current derived view of a session's assets
+      security:
+        - ownerToken: []
+      responses:
+        "200":
+          description: Manifest snapshot, ordered by asset creation time.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Manifest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/sessions/{session_id}/process:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [processing]
+      operationId: getProcessingStatus
+      summary: Get the latest in-memory or persisted processing job status
+      security:
+        - ownerToken: []
+      responses:
+        "200":
+          description: Current processing status. A session with no job is idle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessingJob"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [processing]
+      operationId: startProcessing
+      summary: Start processing photos and videos in a session
+      description: Returns immediately. Follow the job through this endpoint or the session event stream.
+      security:
+        - ownerToken: []
+      responses:
+        "202":
+          description: Processing job queued, or the existing active job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessingJob"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/sessions/{session_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/OwnerTokenQuery"
+    get:
+      tags: [sessions]
+      operationId: streamSessionEvents
+      summary: Stream a session snapshot and live asset or processing events
+      description: |
+        Server-sent events. Authenticate with an OwnerToken bearer header or the
+        `token` query parameter; the query option supports EventSource.
+        The stream begins with `snapshot`, then emits `asset.created`,
+        `asset.stored`, `asset.ready`, `asset.failed`, `asset.removed`,
+        `job.started`, `job.progress`, `job.done`, or `job.failed` as applicable.
+      security:
+        - ownerToken: []
+        - ownerTokenQuery: []
+      responses:
+        "200":
+          description: Event stream. Each event's data is a JSON manifest, asset, removal, or processing-job payload.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/sessions/{session_id}/assets/{asset_id}/file:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/AssetId"
+      - $ref: "#/components/parameters/OwnerTokenQuery"
+    get:
+      tags: [assets]
+      operationId: getAssetFile
+      summary: Download or stream an uploaded asset
+      description: |
+        Authenticate with an OwnerToken bearer header or the `token` query parameter.
+        Supports HTTP Range requests for video seeking. The response content type is
+        the asset's stored MIME type, or `application/octet-stream` when unknown.
+      security:
+        - ownerToken: []
+        - ownerTokenQuery: []
+      responses:
+        "200":
+          description: Asset file.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Requested byte range of the asset file.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/AssetNotFound"
+
+  /api/sessions/{session_id}/assets/{asset_id}/thumb:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/AssetId"
+      - $ref: "#/components/parameters/OwnerTokenQuery"
+    get:
+      tags: [assets]
+      operationId: getAssetThumbnail
+      summary: Get an asset's JPEG thumbnail
+      description: Authenticate with an OwnerToken bearer header or the `token` query parameter.
+      security:
+        - ownerToken: []
+        - ownerTokenQuery: []
+      responses:
+        "200":
+          description: JPEG thumbnail.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/AssetNotFound"
+
+components:
+  securitySchemes:
+    ownerToken:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque owner token
+    ownerTokenQuery:
+      type: apiKey
+      in: query
+      name: token
+      description: Alternative for browser APIs that cannot set request headers.
+
+  parameters:
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Opaque capture-session identifier.
+    AssetId:
+      name: asset_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Opaque asset identifier.
+    PairToken:
+      name: pair_token
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Short-lived opaque token embedded in the phone URL.
+    OwnerTokenQuery:
+      name: token
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Owner token for EventSource and media elements.
+
+  schemas:
+    SessionCreated:
+      type: object
+      required: [session_id, owner_token, pair_token, pair_expires_at, phone_url]
+      properties:
+        session_id:
+          type: string
+        owner_token:
+          type: string
+          description: Secret shown to the laptop owner; retain only for this session flow.
+        pair_token:
+          type: string
+          description: Short-lived secret for phone upload setup.
+        pair_expires_at:
+          type: string
+          format: date-time
+        phone_url:
+          type: string
+          format: uri
+    PairTokenIssued:
+      type: object
+      required: [pair_token, pair_expires_at, phone_url]
+      properties:
+        pair_token:
+          type: string
+        pair_expires_at:
+          type: string
+          format: date-time
+        phone_url:
+          type: string
+          format: uri
+    PairTokenValidated:
+      type: object
+      required: [session_id, expires_at]
+      properties:
+        session_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    Manifest:
+      type: object
+      required: [session_id, generated_at, asset_count, assets]
+      properties:
+        session_id:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        asset_count:
+          type: integer
+          minimum: 0
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+    Asset:
+      type: object
+      required:
+        - id
+        - session_id
+        - kind
+        - original_filename
+        - mime
+        - size_bytes
+        - sha256
+        - status
+        - stored_path
+        - thumb_path
+        - error_reason
+        - created_at
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        kind:
+          type: string
+          enum: [video, photo, floorplan, sensor]
+        original_filename:
+          type: string
+        mime:
+          type: string
+        size_bytes:
+          type: integer
+          minimum: 0
+        sha256:
+          type: string
+          nullable: true
+          description: SHA-256 checksum after the asset has been stored.
+        status:
+          type: string
+          enum: [uploading, stored, ready, failed]
+        stored_path:
+          type: string
+          nullable: true
+          description: Path relative to DATA_DIR; not a browser URL.
+        thumb_path:
+          type: string
+          nullable: true
+          description: JPEG thumbnail path relative to DATA_DIR; not a browser URL.
+        error_reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    ProcessingJob:
+      type: object
+      required:
+        - session_id
+        - status
+        - phase
+        - done
+        - total
+        - image_count
+        - message
+        - output_dir
+        - inputs_file
+        - started_at
+        - finished_at
+        - error
+      properties:
+        session_id:
+          type: string
+        status:
+          type: string
+          enum: [idle, queued, running, done, failed]
+        phase:
+          type: string
+        done:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        image_count:
+          type: integer
+          minimum: 0
+        message:
+          type: string
+        output_dir:
+          type: string
+          description: Path relative to DATA_DIR.
+        inputs_file:
+          type: string
+          description: Path relative to DATA_DIR, present after successful processing.
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        error:
+          type: string
+          nullable: true
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid owner token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            detail: invalid owner token
+    PairTokenNotFound:
+      description: Pair token is invalid or no longer available.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            detail: pair token invalid
+    PairTokenExpired:
+      description: Pair token has expired.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            detail: pair token expired
+    AssetNotFound:
+      description: Asset, thumbnail, or stored file does not exist for this session.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            detail: no such asset

@@ -17,6 +17,7 @@ from .db import Database
 from .events import Broker
 from .hooks import router as hooks_router
 from .logging_setup import install as install_log_redaction
+from .processing import ProcessingManager
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = settings_now
         app.state.database = Database(str(settings_now.db_path))
         app.state.broker = Broker()
+        app.state.processing = ProcessingManager()
         logger.info(
             "data_dir=%s base_url=%s cors=%s",
             settings_now.data_dir,

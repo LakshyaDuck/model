@@ -110,7 +110,7 @@ tusd's leftover `<upload_id>.info` files are harmless; the API never reads them.
 
 ## 4. tusd command line
 
-Image: `tus/tusd:v2.10.1` (pin a v2.x tag; check the exact published tag before building). The API in `Dockerfile` must be able to resolve the hostname `api` on the shared network.
+Image: `tusproject/tusd:v2.10.1` (pin a v2.x tag; check the exact published tag before building). The API in `Dockerfile` must be able to resolve the hostname `api` on the shared network.
 
 ```sh
 tusd \

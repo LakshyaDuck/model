@@ -41,7 +41,8 @@ flowchart LR
 
 ## Docker-first local topology
 
-`compose.yaml` implements the first deployable slice:
+`compose.yaml` implements the current local working slice. It is the source of truth
+for service boundaries, not a commitment to a hosted deployment.
 
 | Service | Responsibility | Public |
 | --- | --- | --- |
@@ -90,10 +91,23 @@ For Round 2, add a POI search panel, click-to-focus POIs, A* path preview, and c
 
 AR is a bonus stage. An ARCore/ARKit web/native client estimates live pose, relocalises against visual anchors/camera poses, transforms it into the published map coordinate frame, and overlays the same navigation polyline. When localisation confidence is low, the UI must say so and offer a visual re-anchor rather than issuing incorrect directions.
 
-## Deployment evolution
+## Deployment status
 
-Local compose is the source of truth for the service boundaries. A single VM can run the exact gateway/API/tusd/frontend topology with a persistent volume. Move compute off the VM only when render jobs make it necessary: upload raw media to object storage, send immutable job payloads to a GPU worker, and retain the API/POI database as the control plane. Pin every production image to a digest after testing it on the target architecture; `latest` is appropriate only for the first local image download.
+The project is local-first. Oracle Cloud is not a viable option because account
+creation requires a credit card, which is unavailable to this project. No public
+host, domain, VM, DNS configuration, or TLS deployment is currently planned.
+
+Use Docker Compose on the development machine for demos and development. A phone on
+the same network can use the laptop's LAN address as `PUBLIC_BASE_URL`; this remains
+local-network testing, not a public deployment. Keep the Compose topology portable so
+a future hosting decision can reuse its API, tusd, gateway, and shared-volume
+boundaries. Choose that host only when the project has a viable account and a need to
+publish it.
 
 ## Current implementation boundary
 
-Implemented now: capture, tokenised resumable uploads, manifests, production-style local compose, a Docker-downloaded COLMAP worker, and sparse reconstruction from JPEG/PNG photos. Not implemented yet: frame extraction, dense/photorealistic rendering, a 3D viewer, POIs, navmesh/pathfinding, job orchestration, and AR. Those are the next stages above, in dependency order.
+Implemented now: capture, tokenised resumable uploads, manifests, local Compose,
+a Docker-downloaded COLMAP worker, and sparse reconstruction from JPEG/PNG photos.
+Not implemented yet: frame extraction, dense/photorealistic rendering, a 3D viewer,
+POIs, navmesh/pathfinding, job orchestration, AR, and public hosting. Those are
+separate future decisions; hosting is intentionally deferred.

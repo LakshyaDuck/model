@@ -32,5 +32,24 @@ export const fileUrl = (sessionId, assetId, ownerToken) =>
 export const thumbUrl = (sessionId, assetId, ownerToken) =>
   withToken(`/api/sessions/${sessionId}/assets/${assetId}/thumb`, ownerToken)
 
+// Process-button: starts/fetches the OpenCV pass over a session's photos + videos.
+// Owner-token endpoints, so the token rides in the Authorization header.
+export async function startProcessing(sessionId, ownerToken) {
+  const response = await fetch(`/api/sessions/${sessionId}/process`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ownerToken}` },
+  })
+  if (!response.ok) throw new Error(`could not start processing (${response.status})`)
+  return response.json()
+}
+
+export async function processingStatus(sessionId, ownerToken) {
+  const response = await fetch(`/api/sessions/${sessionId}/process`, {
+    headers: { authorization: `Bearer ${ownerToken}` },
+  })
+  if (!response.ok) throw new Error(`could not read processing status (${response.status})`)
+  return response.json()
+}
+
 // Absolute so tus-js-client never resolves it against the /phone/:token route.
 export const tusEndpoint = `${window.location.origin}/files/`

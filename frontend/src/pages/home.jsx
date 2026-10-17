@@ -5,6 +5,8 @@ import {
   createSession,
   eventsUrl,
   fileUrl,
+  processingStatus,
+  startProcessing,
   thumbUrl,
 } from '../api.js'
 
@@ -12,6 +14,26 @@ const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 const isLoopback = ['localhost', '127.0.0.1', '::1', ''].includes(window.location.hostname)
 
 const ASSET_EVENTS = ['asset.created', 'asset.stored', 'asset.ready', 'asset.failed']
+const JOB_EVENTS = ['job.started', 'job.progress', 'job.done', 'job.failed']
+
+const SESSION_KEY = 'namma-space.session'
+
+function loadSavedSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function saveSession(session) {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+  } catch {
+    // storage unavailable (private mode); the session just won't survive a reload
+  }
+}
 
 function Home() {
   const videoRef = useRef(null)
@@ -104,15 +126,19 @@ function navigateToScan(text) {
 }
 
 function Laptop() {
-  const [session, setSession] = useState(null)
+  const [session, setSession] = useState(() => loadSavedSession())
   const [error, setError] = useState(null)
   const [assets, setAssets] = useState([])
+  const [job, setJob] = useState(null)
 
   useEffect(() => {
+    if (session) return
     let cancelled = false
     createSession()
       .then((created) => {
-        if (!cancelled) setSession(created)
+        if (cancelled) return
+        saveSession(created)
+        setSession(created)
       })
       .catch((err) => {
         if (!cancelled) setError(err.message)
@@ -120,7 +146,24 @@ function Laptop() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [session])
+
+  // Show a completion from an earlier run (the job lives in the API's memory, the
+  // inputs file on disk survives a restart).
+  useEffect(() => {
+    if (!session) return
+    let cancelled = false
+    processingStatus(session.session_id, session.owner_token)
+      .then((status) => {
+        if (!cancelled) setJob(status)
+      })
+      .catch(() => {
+        // a status read is not worth surfacing an error for
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [session])
 
   useEffect(() => {
     if (!session) return
@@ -140,10 +183,36 @@ function Laptop() {
     })
     for (const name of ASSET_EVENTS) source.addEventListener(name, upsert)
     source.addEventListener('asset.removed', remove)
+    const onJob = (event) => setJob(JSON.parse(event.data))
+    for (const name of JOB_EVENTS) source.addEventListener(name, onJob)
     return () => source.close()
   }, [session])
 
   const phoneUrl = session ? `${window.location.origin}/phone/${session.pair_token}` : ''
+
+  const startNewSession = async () => {
+    try {
+      const created = await createSession()
+      saveSession(created)
+      setAssets([])
+      setJob(null)
+      setSession(created)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const processSession = async () => {
+    if (!session) return
+    setError(null)
+    try {
+      setJob(await startProcessing(session.session_id, session.owner_token))
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const processing = job?.status === 'running' || job?.status === 'queued'
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-fuchsia-600 to-pink-500 flex items-center justify-center p-6">
@@ -179,12 +248,19 @@ function Laptop() {
           <p className="text-xs text-gray-400 mt-3 break-all text-center">{phoneUrl}</p>
         )}
 
+        <button
+          onClick={startNewSession}
+          className="mt-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-xl text-sm font-semibold text-gray-700"
+        >
+          New session
+        </button>
+
         <div className="mt-6 text-sm text-gray-600 space-y-2 text-left w-full bg-pink-50 rounded-xl p-4">
           <p className="font-semibold text-fuchsia-700">Instructions:</p>
           <p>1. Scan the QR code using your phone.</p>
-          <p>2. Capture the photo using your phone.</p>
-          <p>3. Follow the instructions given on your phone.</p>
-          <p>4. Here you will see the 3D rendered image of the photo.</p>
+          <p>2. Capture photos and videos with your phone.</p>
+          <p>3. Uploads appear here live as they arrive.</p>
+          <p>4. Press Process to prepare the images for the 3D stage.</p>
         </div>
 
         {session && (
@@ -198,20 +274,32 @@ function Laptop() {
               <ul className="space-y-2">
                 {assets.map((asset) => (
                   <li key={asset.id} className="flex items-center gap-3 bg-gray-50 rounded-lg p-2">
-                    {asset.kind === 'photo' && asset.thumb_path ? (
+                    {asset.kind === 'video' ? (
+                      <video
+                        src={fileUrl(session.session_id, asset.id, session.owner_token)}
+                        poster={asset.thumb_path ? thumbUrl(session.session_id, asset.id, session.owner_token) : undefined}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        className="w-40 h-24 rounded bg-black"
+                      />
+                    ) : asset.kind === 'photo' && asset.thumb_path ? (
                       <img
                         src={thumbUrl(session.session_id, asset.id, session.owner_token)}
                         alt=""
                         className="w-12 h-12 object-cover rounded"
                       />
                     ) : (
-                      <div className="w-12 h-12 rounded bg-gray-200 flex items-center justify-center text-xs text-gray-500">
+                      <div className="w-12 h-12 flex items-center justify-center rounded bg-gray-200 text-xs text-gray-500">
                         {asset.kind}
                       </div>
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="text-xs truncate text-gray-700">{asset.original_filename}</p>
                       <p className="text-[11px] text-gray-400">{asset.status}</p>
+                      {asset.stored_path && (
+                        <p className="text-[10px] text-gray-400 break-all">/data/{asset.stored_path}</p>
+                      )}
                     </div>
                     <a
                       href={fileUrl(session.session_id, asset.id, session.owner_token)}
@@ -224,6 +312,34 @@ function Laptop() {
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+        )}
+
+        {session && (
+          <div className="mt-6 w-full">
+            <button
+              onClick={processSession}
+              disabled={processing || assets.length === 0}
+              className="w-full px-4 py-3 bg-fuchsia-600 hover:bg-fuchsia-500 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed rounded-xl font-semibold text-white shadow"
+            >
+              {processing ? 'Processing…' : 'Process session'}
+            </button>
+
+            {job && job.status !== 'idle' && (
+              <div className="mt-3 text-xs text-gray-600 bg-gray-50 rounded-xl p-3 space-y-1 text-left">
+                <p>
+                  <span className="font-semibold text-fuchsia-700">Status:</span>{' '}
+                  {job.status}
+                  {job.total > 0 && ` — ${job.done}/${job.total} uploads`}
+                </p>
+                {job.phase && <p className="text-gray-500">{job.phase}</p>}
+                {job.message && <p className="text-gray-700">{job.message}</p>}
+                {job.error && <p className="text-red-600 break-all">{job.error}</p>}
+                {job.inputs_file && (
+                  <p className="text-[10px] text-gray-400 break-all">/data/{job.inputs_file}</p>
+                )}
+              </div>
             )}
           </div>
         )}

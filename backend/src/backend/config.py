@@ -56,6 +56,10 @@ class Settings:
     def ensure_dirs(self) -> None:
         self.tus_dir.mkdir(parents=True, exist_ok=True)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        # The API (root) creates this directory, but the tusd container runs as
+        # uid 1000 and writes the upload files into the shared volume. Widen the
+        # mode so tusd can create uploads regardless of who created the volume.
+        self.tus_dir.chmod(0o777)
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:

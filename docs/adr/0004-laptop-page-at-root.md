@@ -1,3 +1,7 @@
-# Laptop page is `/`
+# Superseded — DEV laptop page at `/`
 
-This deploy’s laptop UI is the existing DEV page. People open the public origin, so that page is served at `/`. `/dev/laptop` stays as the same page so old local docs still work. The phone page stays at `/m/<pair_token>`. The Vite app is still not this page.
+**Status:** Superseded on 2026-10-17.
+
+The React application now serves the laptop UI at `/` in the local Compose gateway.
+The backend's `/dev/laptop` and `/m/{pair_token}` routes remain development tools;
+they are not a public-hosting plan.
