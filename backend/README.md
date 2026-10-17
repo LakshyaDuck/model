@@ -20,8 +20,10 @@ src/backend/
   events.py      in-process pub/sub per session
   manifest.py    atomic manifest.json writer
   media.py       sha256, safe extensions, thumbnails (ffmpeg / Pillow)
-  processing.py  Process job: normalizes photos/videos into processed/inputs.json;
-                 pipeline() is the owner hook for the reconstruction work (videos)
+  processing.py  Process job: normalizes photos into processed/inputs.json and
+                 runs pipeline() (owner hook) over the session's videos
+  extract_frames.py  blur-filtered frame extraction for one video (Laplacian
+                     variance, CSV report) -> extracted_frames/
 dev_pages/       DEV ONLY throwaway laptop + phone pages
 scripts/         dev.py — one-command local API+tusd stack; simulate_upload.py — phone-less upload
 tests/           pytest

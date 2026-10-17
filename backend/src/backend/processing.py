@@ -1,13 +1,15 @@
-"""The "Process" stage: turn a session's raw photos and videos into one normalized
-set of images the next stage can consume.
+"""The "Process" stage: turn a session's raw photos and videos into the images
+and frames the next stage can consume.
 
-OpenCV does the work (photos are validated/re-encoded, videos are decoded into a
-sampled frame sequence). The job runs as an asyncio task so the HTTP request that
-starts it returns immediately; each blocking call is pushed to a worker thread so
-the event loop, and therefore uploads and SSE, stay responsive.
+OpenCV does the work: photos are validated/re-encoded into ``processed/images``,
+and videos are handed to ``pipeline()``, which uses ``extract_frames`` to write
+blur-filtered stills into ``extracted_frames/``. The job runs as an asyncio task
+so the HTTP request that starts it returns immediately; each blocking call is
+pushed to a worker thread so the event loop, and therefore uploads and SSE, stay
+responsive.
 
-Everything is written under sessions/<id>/processed/ and the hand-off artifact is
-processed/inputs.json (the file the next stage reads).
+The photo hand-off artifact is processed/inputs.json (the file the next stage
+reads).
 
 ``pipeline(videos)`` is the single ownership point for the reconstruction work:
 the job runner hands it every video in the session and treats its
@@ -30,6 +32,7 @@ from sqlmodel import select
 
 from .config import Settings
 from .events import JOB_DONE, JOB_FAILED, JOB_PROGRESS, JOB_STARTED
+from .extract_frames import extract_frames
 from .models import READY, STORED, Asset, iso, utcnow
 
 logger = logging.getLogger(__name__)
@@ -37,11 +40,10 @@ logger = logging.getLogger(__name__)
 PROCESSED_DIRNAME = "processed"
 IMAGES_DIRNAME = "images"
 INPUTS_NAME = "inputs.json"
+EXTRACTED_FRAMES_DIRNAME = "extracted_frames"
 
-# Sampling knobs for turning a video into stills. Bounded so a long upload cannot
-# flood the output directory or tie up the worker for minutes.
-TARGET_FPS = 2.0
-MAX_FRAMES_PER_VIDEO = 300
+# Sampling knobs for turning a photo into a normalized still. Bounded so a huge
+# upload cannot tie up the worker for minutes.
 MAX_IMAGE_DIM = 2000
 JPEG_QUALITY = 90
 
@@ -81,6 +83,10 @@ class ProcessingJob:
 
 def processed_dir(settings: Settings, session_id: str) -> Path:
     return settings.session_dir(session_id) / PROCESSED_DIRNAME
+
+
+def extracted_frames_dir(settings: Settings, session_id: str) -> Path:
+    return settings.session_dir(session_id) / EXTRACTED_FRAMES_DIRNAME
 
 
 async def _publish(app, session_id: str, event: str, job: ProcessingJob) -> None:
@@ -132,33 +138,6 @@ def process_photo(source: Path, images_dir: Path, stem: str) -> dict | None:
     if not cv2.imwrite(str(dest), _fit(image), [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]):
         return None
     return {"image": dest.name, "frame_index": None}
-
-
-def process_video(source: Path, images_dir: Path, stem: str) -> list[dict]:
-    cap = cv2.VideoCapture(str(source))
-    if not cap.isOpened():
-        logger.warning("could not open video %s", source)
-        return []
-
-    records: list[dict] = []
-    try:
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        step = max(1, round((fps if fps and fps > 0 else 30.0) / TARGET_FPS))
-        index = 0
-        while len(records) < MAX_FRAMES_PER_VIDEO:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            if index % step == 0:
-                dest = images_dir / f"{stem}_f{len(records):04d}.jpg"
-                if cv2.imwrite(
-                    str(dest), _fit(frame), [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
-                ):
-                    records.append({"image": dest.name, "frame_index": index})
-            index += 1
-    finally:
-        cap.release()
-    return records
 
 
 class ProcessingManager:
@@ -250,7 +229,9 @@ class ProcessingManager:
             videos = [source for source in sources if source["kind"] == "video"]
             job.phase = "pipeline"
             await _publish(app, session_id, JOB_PROGRESS, job)
-            signal = await asyncio.to_thread(pipeline, videos)
+            signal = await asyncio.to_thread(
+                pipeline, videos, settings=settings, session_id=session_id
+            )
             if signal.get("status") != JOB_DONE_STATUS:
                 raise RuntimeError(f"pipeline reported {signal!r}, expected {PIPELINE_DONE!r}")
 
@@ -314,29 +295,29 @@ class ProcessingManager:
 
 
 def _process_one(source: dict, path: Path, images_dir: Path, indexed: bool) -> list[dict]:
-    """Runs in a worker thread. Returns one record per produced image."""
-    stem = source["asset_id"] if indexed else Path(source["stored_path"]).stem
+    """Runs in a worker thread. Returns one record per produced image.
+
+    Videos are not normalized here: they are handed to pipeline() and handled by
+    extract_frames, so this returns nothing for them.
+    """
     if source["kind"] == "video":
-        produced = [
-            {"image": r["image"], "frame_index": r["frame_index"]}
-            for r in process_video(path, images_dir, stem)
-        ]
-    else:
-        photo = process_photo(path, images_dir, stem)
-        produced = [photo] if photo else []
-    source_kind = source["kind"]
+        return []
+
+    stem = source["asset_id"] if indexed else Path(source["stored_path"]).stem
+    photo = process_photo(path, images_dir, stem)
+    if not photo:
+        return []
     return [
         {
-            **record,
+            **photo,
             "source_asset_id": source["asset_id"],
-            "source_kind": source_kind,
+            "source_kind": source["kind"],
             "source_filename": source["original_filename"],
         }
-        for record in produced
     ]
 
 
-def pipeline(videos: list[dict]) -> dict:
+def pipeline(videos: list[dict], *, settings: Settings, session_id: str) -> dict:
     """Process every video belonging to the current session.
 
     This is the single ownership point for the reconstruction work. `videos` is
@@ -350,10 +331,20 @@ def pipeline(videos: list[dict]) -> dict:
             "mime": str,
         }
 
-    Implement the real per-video processing here (for example frame
-    extraction, COLMAP calibration, or mesh generation). The returned value is
-    the job-completion signal and must stay exactly ``PIPELINE_DONE``; the job
-    runner treats any other value as a failure.
+    The default implementation extracts sharp frames from every video into
+    ``sessions/<session_id>/extracted_frames/``. Extend this for the later stages
+    (COLMAP calibration, mesh/splat generation). The returned value is the
+    job-completion signal and must stay exactly ``PIPELINE_DONE``; the job runner
+    treats any other value as a failure.
     """
-    _ = videos
+    frames_dir = extracted_frames_dir(settings, session_id)
+    for video in videos:
+        source = settings.data_dir / video["stored_path"]
+        if not source.is_file():
+            logger.warning("video missing on disk, skipping: %s", source)
+            continue
+        try:
+            extract_frames(source, frames_dir, prefix=video["asset_id"])
+        except Exception as exc:  # noqa: BLE001 - one bad video must not fail the job
+            logger.warning("frame extraction skipped for %s: %s", source, exc)
     return PIPELINE_DONE

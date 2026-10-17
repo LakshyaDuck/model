@@ -61,6 +61,8 @@ Every stage writes below one immutable session root and records a small metadata
 ```text
 /data/sessions/<session-id>/
   raw/                         original immutable phone files
+  extracted_frames/            blur-filtered stills per video (extract_frames)
+  processed/                   normalized photos + inputs.json hand-off
   reconstruction/
     frames/                    selected/normalised images (future worker)
     colmap/<run-id>/           database, sparse model, PLY export
@@ -107,9 +109,9 @@ publish it.
 ## Current implementation boundary
 
 Implemented now: capture, tokenised resumable uploads, manifests, local Compose,
-the Process job (`backend/src/backend/processing.py`, which normalises photos and
-videos into `processed/inputs.json` and exposes `pipeline(videos)` as the owner
-hook for reconstruction), a Docker-downloaded COLMAP worker, and sparse
+the Process job (which normalises photos into `processed/inputs.json` and, via
+`pipeline(videos)`, extracts blur-filtered frames from each video into
+`extracted_frames/`), a Docker-downloaded COLMAP worker, and sparse
 reconstruction from JPEG/PNG photos.
 Not implemented yet: HTML/video frame filtering, dense/photorealistic rendering, a
 3D viewer, POIs, navmesh/pathfinding, job orchestration, AR, and public hosting.
