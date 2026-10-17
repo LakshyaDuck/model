@@ -20,6 +20,8 @@ src/backend/
   events.py      in-process pub/sub per session
   manifest.py    atomic manifest.json writer
   media.py       sha256, safe extensions, thumbnails (ffmpeg / Pillow)
+  processing.py  Process job: normalizes photos/videos into processed/inputs.json;
+                 pipeline() is the owner hook for the reconstruction work (videos)
 dev_pages/       DEV ONLY throwaway laptop + phone pages
 scripts/         dev.py — one-command local API+tusd stack; simulate_upload.py — phone-less upload
 tests/           pytest
@@ -133,6 +135,8 @@ endpoints also accept `?token=` because `EventSource` and media tags cannot set 
 | GET | `/api/pair/{pair_token}` | – | `{session_id, expires_at}`, or 404/410. Used by the phone page. |
 | GET | `/api/sessions/{id}/manifest` | owner | Current assets. |
 | GET | `/api/sessions/{id}/events` | owner | SSE: `snapshot`, then `asset.created/stored/ready/failed/removed`, keep-alive comment every 15 s. |
+| GET | `/api/sessions/{id}/process` | owner | Latest processing job status (`idle` when there is none). |
+| POST | `/api/sessions/{id}/process` | owner | Start processing the session's photos/videos; returns `202` and the job. |
 | GET | `/api/sessions/{id}/assets/{asset_id}/file` | owner | Raw file, supports Range so videos seek. |
 | GET | `/api/sessions/{id}/assets/{asset_id}/thumb` | owner | JPEG thumbnail, 404 when there is none. |
 | POST | `/internal/tusd-hook` | `HOOK_SECRET` | tusd hook receiver. Never expose it. |

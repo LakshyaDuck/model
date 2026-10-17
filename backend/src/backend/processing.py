@@ -8,6 +8,10 @@ the event loop, and therefore uploads and SSE, stay responsive.
 
 Everything is written under sessions/<id>/processed/ and the hand-off artifact is
 processed/inputs.json (the file the next stage reads).
+
+``pipeline(videos)`` is the single ownership point for the reconstruction work:
+the job runner hands it every video in the session and treats its
+``PIPELINE_DONE`` return value as the completion signal.
 """
 
 from __future__ import annotations
@@ -46,6 +50,10 @@ JOB_RUNNING = "running"
 JOB_DONE_STATUS = "done"
 JOB_FAILED_STATUS = "failed"
 JOB_IDLE = "idle"
+
+# The only return value pipeline() is allowed to produce. The job runner treats
+# this as the "finished" signal and keys off nothing else.
+PIPELINE_DONE = {"status": JOB_DONE_STATUS}
 
 # Only fully stored assets are processed; an upload still in flight is picked up by
 # the next run.
@@ -236,6 +244,16 @@ class ProcessingManager:
                 job.image_count = len(images)
                 await _publish(app, session_id, JOB_PROGRESS, job)
 
+            # Owner hook: hand every video in this session to pipeline(). It runs
+            # in a worker thread so a long run does not block the event loop, and
+            # its return value must be the PIPELINE_DONE signal.
+            videos = [source for source in sources if source["kind"] == "video"]
+            job.phase = "pipeline"
+            await _publish(app, session_id, JOB_PROGRESS, job)
+            signal = await asyncio.to_thread(pipeline, videos)
+            if signal.get("status") != JOB_DONE_STATUS:
+                raise RuntimeError(f"pipeline reported {signal!r}, expected {PIPELINE_DONE!r}")
+
             payload = {
                 "session_id": session_id,
                 "generated_at": iso(utcnow()),
@@ -316,3 +334,26 @@ def _process_one(source: dict, path: Path, images_dir: Path, indexed: bool) -> l
         }
         for record in produced
     ]
+
+
+def pipeline(videos: list[dict]) -> dict:
+    """Process every video belonging to the current session.
+
+    This is the single ownership point for the reconstruction work. `videos` is
+    the session's uploaded videos in creation order, one dict per asset::
+
+        {
+            "asset_id": str,
+            "kind": "video",
+            "original_filename": str,
+            "stored_path": str,  # relative to DATA_DIR
+            "mime": str,
+        }
+
+    Implement the real per-video processing here (for example frame
+    extraction, COLMAP calibration, or mesh generation). The returned value is
+    the job-completion signal and must stay exactly ``PIPELINE_DONE``; the job
+    runner treats any other value as a failure.
+    """
+    _ = videos
+    return PIPELINE_DONE
