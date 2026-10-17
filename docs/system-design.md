@@ -107,7 +107,10 @@ publish it.
 ## Current implementation boundary
 
 Implemented now: capture, tokenised resumable uploads, manifests, local Compose,
-a Docker-downloaded COLMAP worker, and sparse reconstruction from JPEG/PNG photos.
-Not implemented yet: frame extraction, dense/photorealistic rendering, a 3D viewer,
-POIs, navmesh/pathfinding, job orchestration, AR, and public hosting. Those are
-separate future decisions; hosting is intentionally deferred.
+the Process job (`backend/src/backend/processing.py`, which normalises photos and
+videos into `processed/inputs.json` and exposes `pipeline(videos)` as the owner
+hook for reconstruction), a Docker-downloaded COLMAP worker, and sparse
+reconstruction from JPEG/PNG photos.
+Not implemented yet: HTML/video frame filtering, dense/photorealistic rendering, a
+3D viewer, POIs, navmesh/pathfinding, job orchestration, AR, and public hosting.
+Those are separate future decisions; hosting is intentionally deferred.

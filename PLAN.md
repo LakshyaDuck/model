@@ -1,9 +1,15 @@
 # Plan
 
-## Things that need to be done
+## Inputs and outputs
 
-### Inputs
-- all the photos and videos in current session after Process button is pressed
+- **Input** — every video in the current session, handed to `pipeline(videos)` in
+  `backend/src/backend/processing.py` after the Process button starts the job.
+  Each entry has `asset_id`, `kind`, `original_filename`, `stored_path`, and
+  `mime`.
+- **Output** — a 3D model as a `.glb` file.
 
-### Output
-- 3d model - glb file
+## Where to implement
+
+`pipeline()` in `backend/src/backend/processing.py` is the ownership point. It
+receives the session's videos and must return the `PIPELINE_DONE` signal when it
+finishes; the job runner treats any other return value as a failure.
