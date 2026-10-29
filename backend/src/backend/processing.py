@@ -3,10 +3,12 @@ and frames the next stage can consume.
 
 OpenCV does the work: photos are validated/re-encoded into ``processed/images``,
 and videos are handed to ``pipeline()``, which uses ``extract_frames`` to write
-blur-filtered stills into ``extracted_frames/``. The job runs as an asyncio task
-so the HTTP request that starts it returns immediately; each blocking call is
-pushed to a worker thread so the event loop, and therefore uploads and SSE, stay
-responsive.
+blur-filtered stills into ``extracted_frames/``. From those frames it runs COLMAP
+feature extraction and exhaustive matching (via ``feature_extraction`` and
+``feature_matching``) into ``reconstruction/colmap/<run_id>/``. The job runs as an
+asyncio task so the HTTP request that starts it returns immediately; each blocking
+call is pushed to a worker thread so the event loop, and therefore uploads and SSE,
+stay responsive.
 
 The photo hand-off artifact is processed/inputs.json (the file the next stage
 reads).
@@ -33,6 +35,8 @@ from sqlmodel import select
 from .config import Settings
 from .events import JOB_DONE, JOB_FAILED, JOB_PROGRESS, JOB_STARTED
 from .extract_frames import extract_frames
+from .feature_extraction import extract_features
+from .feature_matching import match_features
 from .models import READY, STORED, Asset, iso, utcnow
 
 logger = logging.getLogger(__name__)
@@ -41,6 +45,9 @@ PROCESSED_DIRNAME = "processed"
 IMAGES_DIRNAME = "images"
 INPUTS_NAME = "inputs.json"
 EXTRACTED_FRAMES_DIRNAME = "extracted_frames"
+RECONSTRUCTION_DIRNAME = "reconstruction"
+COLMAP_DIRNAME = "colmap"
+COLMAP_DATABASE_NAME = "database.db"
 
 # Sampling knobs for turning a photo into a normalized still. Bounded so a huge
 # upload cannot tie up the worker for minutes.
@@ -87,6 +94,15 @@ def processed_dir(settings: Settings, session_id: str) -> Path:
 
 def extracted_frames_dir(settings: Settings, session_id: str) -> Path:
     return settings.session_dir(session_id) / EXTRACTED_FRAMES_DIRNAME
+
+
+def colmap_run_dir(settings: Settings, session_id: str, run_id: str) -> Path:
+    return (
+        settings.session_dir(session_id)
+        / RECONSTRUCTION_DIRNAME
+        / COLMAP_DIRNAME
+        / run_id
+    )
 
 
 async def _publish(app, session_id: str, event: str, job: ProcessingJob) -> None:
@@ -332,12 +348,15 @@ def pipeline(videos: list[dict], *, settings: Settings, session_id: str) -> dict
         }
 
     The default implementation extracts sharp frames from every video into
-    ``sessions/<session_id>/extracted_frames/``. Extend this for the later stages
-    (COLMAP calibration, mesh/splat generation). The returned value is the
+    ``sessions/<session_id>/extracted_frames/``, then runs COLMAP feature
+    extraction and exhaustive matching over those frames in
+    ``sessions/<session_id>/reconstruction/colmap/<run_id>/``. Extend this for the
+    later stages (mapping, mesh/splat generation). The returned value is the
     job-completion signal and must stay exactly ``PIPELINE_DONE``; the job runner
     treats any other value as a failure.
     """
     frames_dir = extracted_frames_dir(settings, session_id)
+    extracted = 0
     for video in videos:
         source = settings.data_dir / video["stored_path"]
         if not source.is_file():
@@ -345,6 +364,16 @@ def pipeline(videos: list[dict], *, settings: Settings, session_id: str) -> dict
             continue
         try:
             extract_frames(source, frames_dir, prefix=video["asset_id"])
+            extracted += 1
         except Exception as exc:  # noqa: BLE001 - one bad video must not fail the job
             logger.warning("frame extraction skipped for %s: %s", source, exc)
+
+    if extracted == 0:
+        logger.info("no frames extracted; skipping COLMAP for session %s", session_id)
+        return PIPELINE_DONE
+
+    run_id = utcnow().strftime("%Y%m%dT%H%M%SZ")
+    database_path = colmap_run_dir(settings, session_id, run_id) / COLMAP_DATABASE_NAME
+    extract_features(frames_dir, database_path)
+    match_features(database_path)
     return PIPELINE_DONE

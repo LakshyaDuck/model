@@ -19,6 +19,7 @@ Declared dependencies (resolved in `backend/uv.lock`, installed into
 | `numpy` | `>=2.0` | Explicit array base for image/geometry work (also a transitive dep) |
 | `open3d` | `>=0.20.0` | Geometry processing for reconstruction/rendering stages |
 | `trimesh` | `>=5.1.1` | Mesh loading, inspection, and export for reconstruction stages |
+| `pycolmap` | `>=4.2.1` | COLMAP feature extraction and exhaustive matching (bundled COLMAP) |
 
 Dev group (`uv sync --group dev`):
 

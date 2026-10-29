@@ -24,6 +24,8 @@ src/backend/
                  runs pipeline() (owner hook) over the session's videos
   extract_frames.py  blur-filtered frame extraction for one video (Laplacian
                      variance, CSV report) -> extracted_frames/
+  feature_extraction.py  COLMAP SIFT extraction over extracted frames -> database.db
+  feature_matching.py    COLMAP exhaustive matching over that database
 dev_pages/       DEV ONLY throwaway laptop + phone pages
 scripts/         dev.py — one-command local API+tusd stack; simulate_upload.py — phone-less upload
 tests/           pytest

@@ -17,3 +17,7 @@ finishes; the job runner treats any other return value as a failure.
 Today it calls `extract_frames()` in `backend/src/backend/extract_frames.py` for
 each video, which writes blur-filtered stills and a CSV report into
 `DATA_DIR/sessions/<session_id>/extracted_frames/` and returns that directory.
+It then runs `extract_features()` and `match_features()` from
+`feature_extraction.py` / `feature_matching.py` over those frames, writing the
+COLMAP database to
+`DATA_DIR/sessions/<session_id>/reconstruction/colmap/<run_id>/database.db`.

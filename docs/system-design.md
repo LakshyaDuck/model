@@ -111,8 +111,9 @@ publish it.
 Implemented now: capture, tokenised resumable uploads, manifests, local Compose,
 the Process job (which normalises photos into `processed/inputs.json` and, via
 `pipeline(videos)`, extracts blur-filtered frames from each video into
-`extracted_frames/`), a Docker-downloaded COLMAP worker, and sparse
-reconstruction from JPEG/PNG photos.
-Not implemented yet: HTML/video frame filtering, dense/photorealistic rendering, a
-3D viewer, POIs, navmesh/pathfinding, job orchestration, AR, and public hosting.
-Those are separate future decisions; hosting is intentionally deferred.
+`extracted_frames/`), in-process COLMAP SIFT extraction and exhaustive matching
+via `pycolmap` into `reconstruction/colmap/<run-id>/database.db`, a
+Docker-downloaded COLMAP worker, and sparse reconstruction from JPEG/PNG photos.
+Not implemented yet: dense/photorealistic rendering, a 3D viewer, POIs,
+navmesh/pathfinding, job orchestration, AR, and public hosting. Those are separate
+future decisions; hosting is intentionally deferred.
