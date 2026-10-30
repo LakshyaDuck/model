@@ -80,7 +80,7 @@ services:
     command: ["--help"]
     volumes:
       - capture-data:/data
-      - ./scripts/reconstruct.sh:/workspace/reconstruct.sh:ro
+      - ./backend/scripts/reconstruct.sh:/workspace/reconstruct.sh:ro
 
 volumes:
   capture-data:

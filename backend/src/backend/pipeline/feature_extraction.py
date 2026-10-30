@@ -2,7 +2,7 @@
 
 ``extract_features`` is importable and has no import-time side effects. It reads
 the JPEGs written by ``extract_frames`` and writes a COLMAP database containing
-the detected SIFT features. ``processing.pipeline`` runs it once per session,
+the detected SIFT features. ``run.pipeline`` runs it once per session,
 after frame extraction and before feature matching.
 """
 

@@ -1,21 +1,11 @@
-"""The "Process" stage: turn a session's raw photos and videos into the images
-and frames the next stage can consume.
+"""The "Process" job: normalize photos and run the reconstruction pipeline.
 
-OpenCV does the work: photos are validated/re-encoded into ``processed/images``,
-and videos are handed to ``pipeline()``, which uses ``extract_frames`` to write
-blur-filtered stills into ``extracted_frames/``. From those frames it runs COLMAP
-feature extraction and exhaustive matching (via ``feature_extraction`` and
-``feature_matching``) into ``reconstruction/colmap/<run_id>/``. The job runs as an
-asyncio task so the HTTP request that starts it returns immediately; each blocking
-call is pushed to a worker thread so the event loop, and therefore uploads and SSE,
-stay responsive.
-
-The photo hand-off artifact is processed/inputs.json (the file the next stage
-reads).
-
-``pipeline(videos)`` is the single ownership point for the reconstruction work:
-the job runner hands it every video in the session and treats its
-``PIPELINE_DONE`` return value as the completion signal.
+Photos are validated/re-encoded into ``processed/images`` by
+``pipeline.prepare``. Every video is handed to ``pipeline.run.pipeline()``, which
+extracts frames and runs the reconstruction stages. ``processed/inputs.json`` is
+the durable hand-off artifact. The job runs as an asyncio task so the HTTP request
+that starts it returns immediately; each blocking call is pushed to a worker thread
+so the event loop, and therefore uploads and SSE, stay responsive.
 """
 
 from __future__ import annotations
@@ -27,42 +17,29 @@ import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import cv2
-import numpy as np
-from PIL import Image, ImageOps
 from sqlmodel import select
 
 from .config import Settings
 from .events import JOB_DONE, JOB_FAILED, JOB_PROGRESS, JOB_STARTED
-from .extract_frames import extract_frames
-from .feature_extraction import extract_features
-from .feature_matching import match_features
 from .models import READY, STORED, Asset, iso, utcnow
+from .pipeline import (
+    PIPELINE_DONE,
+    images_dir,
+    inputs_file,
+    pipeline,
+    prepare_asset,
+    processed_dir,
+    relative_to_data,
+)
 
 logger = logging.getLogger(__name__)
 
-PROCESSED_DIRNAME = "processed"
-IMAGES_DIRNAME = "images"
-INPUTS_NAME = "inputs.json"
-EXTRACTED_FRAMES_DIRNAME = "extracted_frames"
-RECONSTRUCTION_DIRNAME = "reconstruction"
-COLMAP_DIRNAME = "colmap"
-COLMAP_DATABASE_NAME = "database.db"
-
-# Sampling knobs for turning a photo into a normalized still. Bounded so a huge
-# upload cannot tie up the worker for minutes.
-MAX_IMAGE_DIM = 2000
-JPEG_QUALITY = 90
-
 JOB_QUEUED = "queued"
 JOB_RUNNING = "running"
-JOB_DONE_STATUS = "done"
+# The job is done only when pipeline() returns its PIPELINE_DONE signal.
+JOB_DONE_STATUS = PIPELINE_DONE["status"]
 JOB_FAILED_STATUS = "failed"
 JOB_IDLE = "idle"
-
-# The only return value pipeline() is allowed to produce. The job runner treats
-# this as the "finished" signal and keys off nothing else.
-PIPELINE_DONE = {"status": JOB_DONE_STATUS}
 
 # Only fully stored assets are processed; an upload still in flight is picked up by
 # the next run.
@@ -88,72 +65,8 @@ class ProcessingJob:
         return asdict(self)
 
 
-def processed_dir(settings: Settings, session_id: str) -> Path:
-    return settings.session_dir(session_id) / PROCESSED_DIRNAME
-
-
-def extracted_frames_dir(settings: Settings, session_id: str) -> Path:
-    return settings.session_dir(session_id) / EXTRACTED_FRAMES_DIRNAME
-
-
-def colmap_run_dir(settings: Settings, session_id: str, run_id: str) -> Path:
-    return (
-        settings.session_dir(session_id)
-        / RECONSTRUCTION_DIRNAME
-        / COLMAP_DIRNAME
-        / run_id
-    )
-
-
 async def _publish(app, session_id: str, event: str, job: ProcessingJob) -> None:
     await app.state.broker.publish(session_id, event, job.snapshot())
-
-
-def _relative(settings: Settings, path: Path) -> str:
-    """Paths are stored relative to DATA_DIR, like Asset.stored_path."""
-    try:
-        return path.relative_to(settings.data_dir).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def _fit(image: "np.ndarray") -> "np.ndarray":
-    height, width = image.shape[:2]
-    longest = max(height, width)
-    if longest <= MAX_IMAGE_DIM:
-        return image
-    scale = MAX_IMAGE_DIM / longest
-    return cv2.resize(
-        image,
-        (max(1, round(width * scale)), max(1, round(height * scale))),
-        interpolation=cv2.INTER_AREA,
-    )
-
-
-def _imread_pillow(source: Path) -> "np.ndarray | None":
-    """Fallback for formats OpenCV cannot decode (HEIC from iPhones, for example)."""
-    try:
-        with Image.open(source) as image:
-            image = ImageOps.exif_transpose(image)
-            if image.mode not in ("RGB", "L"):
-                image = image.convert("RGB")
-            rgb = np.asarray(image.convert("RGB"))
-    except Exception as exc:  # noqa: BLE001 - a bad photo must not fail the job
-        logger.warning("could not read image %s: %s", source, exc)
-        return None
-    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-
-
-def process_photo(source: Path, images_dir: Path, stem: str) -> dict | None:
-    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
-    if image is None:
-        image = _imread_pillow(source)
-    if image is None:
-        return None
-    dest = images_dir / f"{stem}.jpg"
-    if not cv2.imwrite(str(dest), _fit(image), [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]):
-        return None
-    return {"image": dest.name, "frame_index": None}
 
 
 class ProcessingManager:
@@ -169,7 +82,7 @@ class ProcessingManager:
         job = self._jobs.get(session_id)
         if job is not None:
             return job.snapshot()
-        inputs = processed_dir(settings, session_id) / INPUTS_NAME
+        inputs = inputs_file(settings, session_id)
         if inputs.is_file():
             return self._completed_from_disk(settings, session_id, inputs)
         return ProcessingJob(session_id=session_id, status=JOB_IDLE).snapshot()
@@ -182,7 +95,7 @@ class ProcessingManager:
         settings: Settings = app.state.settings
         job = ProcessingJob(
             session_id=session_id,
-            output_dir=_relative(settings, processed_dir(settings, session_id)),
+            output_dir=relative_to_data(settings, processed_dir(settings, session_id)),
         )
         self._jobs[session_id] = job
         self._tasks[session_id] = asyncio.create_task(self._run(app, session_id, job))
@@ -214,11 +127,10 @@ class ProcessingManager:
                     if asset.kind in ("photo", "video") and asset.stored_path
                 ]
 
-            out = processed_dir(settings, session_id)
-            images_dir = out / IMAGES_DIRNAME
-            if images_dir.exists():
-                shutil.rmtree(images_dir)
-            images_dir.mkdir(parents=True, exist_ok=True)
+            images_path = images_dir(settings, session_id)
+            if images_path.exists():
+                shutil.rmtree(images_path)
+            images_path.mkdir(parents=True, exist_ok=True)
 
             job.total = len(sources)
             job.phase = "preparing"
@@ -232,7 +144,7 @@ class ProcessingManager:
                 if path.is_file():
                     images.extend(
                         await asyncio.to_thread(
-                            _process_one, source, path, images_dir, len(sources) > 1
+                            prepare_asset, source, path, images_path, len(sources) > 1
                         )
                     )
                 job.done += 1
@@ -259,7 +171,7 @@ class ProcessingManager:
                 "sources": sources,
                 "images": [
                     {
-                        "path": _relative(settings, images_dir / record["image"]),
+                        "path": relative_to_data(settings, images_path / record["image"]),
                         "source_asset_id": record["source_asset_id"],
                         "source_kind": record["source_kind"],
                         "source_filename": record["source_filename"],
@@ -268,13 +180,13 @@ class ProcessingManager:
                     for record in images
                 ],
             }
-            inputs_file = out / INPUTS_NAME
-            inputs_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            inputs_path = inputs_file(settings, session_id)
+            inputs_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
             job.status = JOB_DONE_STATUS
             job.phase = "finished"
             job.image_count = len(images)
-            job.inputs_file = _relative(settings, inputs_file)
+            job.inputs_file = relative_to_data(settings, inputs_path)
             job.message = (
                 f"{len(images)} images from {len(sources)} uploads"
                 if sources
@@ -302,78 +214,9 @@ class ProcessingManager:
             total=payload.get("source_count", 0),
             done=payload.get("source_count", 0),
             image_count=payload.get("image_count", 0),
-            output_dir=_relative(settings, processed_dir(settings, session_id)),
-            inputs_file=_relative(settings, inputs),
+            output_dir=relative_to_data(settings, processed_dir(settings, session_id)),
+            inputs_file=relative_to_data(settings, inputs),
             finished_at=payload.get("generated_at"),
             message=f"{payload.get('image_count', 0)} images ready",
         )
         return job.snapshot()
-
-
-def _process_one(source: dict, path: Path, images_dir: Path, indexed: bool) -> list[dict]:
-    """Runs in a worker thread. Returns one record per produced image.
-
-    Videos are not normalized here: they are handed to pipeline() and handled by
-    extract_frames, so this returns nothing for them.
-    """
-    if source["kind"] == "video":
-        return []
-
-    stem = source["asset_id"] if indexed else Path(source["stored_path"]).stem
-    photo = process_photo(path, images_dir, stem)
-    if not photo:
-        return []
-    return [
-        {
-            **photo,
-            "source_asset_id": source["asset_id"],
-            "source_kind": source["kind"],
-            "source_filename": source["original_filename"],
-        }
-    ]
-
-
-def pipeline(videos: list[dict], *, settings: Settings, session_id: str) -> dict:
-    """Process every video belonging to the current session.
-
-    This is the single ownership point for the reconstruction work. `videos` is
-    the session's uploaded videos in creation order, one dict per asset::
-
-        {
-            "asset_id": str,
-            "kind": "video",
-            "original_filename": str,
-            "stored_path": str,  # relative to DATA_DIR
-            "mime": str,
-        }
-
-    The default implementation extracts sharp frames from every video into
-    ``sessions/<session_id>/extracted_frames/``, then runs COLMAP feature
-    extraction and exhaustive matching over those frames in
-    ``sessions/<session_id>/reconstruction/colmap/<run_id>/``. Extend this for the
-    later stages (mapping, mesh/splat generation). The returned value is the
-    job-completion signal and must stay exactly ``PIPELINE_DONE``; the job runner
-    treats any other value as a failure.
-    """
-    frames_dir = extracted_frames_dir(settings, session_id)
-    extracted = 0
-    for video in videos:
-        source = settings.data_dir / video["stored_path"]
-        if not source.is_file():
-            logger.warning("video missing on disk, skipping: %s", source)
-            continue
-        try:
-            extract_frames(source, frames_dir, prefix=video["asset_id"])
-            extracted += 1
-        except Exception as exc:  # noqa: BLE001 - one bad video must not fail the job
-            logger.warning("frame extraction skipped for %s: %s", source, exc)
-
-    if extracted == 0:
-        logger.info("no frames extracted; skipping COLMAP for session %s", session_id)
-        return PIPELINE_DONE
-
-    run_id = utcnow().strftime("%Y%m%dT%H%M%SZ")
-    database_path = colmap_run_dir(settings, session_id, run_id) / COLMAP_DATABASE_NAME
-    extract_features(frames_dir, database_path)
-    match_features(database_path)
-    return PIPELINE_DONE

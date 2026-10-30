@@ -6,8 +6,7 @@ Laplacian variance, keeps the sharp frames (adaptive 25th-percentile threshold,
 with a guaranteed minimum keep ratio), writes them as JPEGs, and records every
 decision in a CSV report.
 
-The Process job calls it from ``processing.pipeline`` for each video in the
-session.
+The Process job calls it from ``run.pipeline`` for each video in the session.
 """
 
 from __future__ import annotations

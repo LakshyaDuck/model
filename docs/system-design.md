@@ -63,6 +63,7 @@ Every stage writes below one immutable session root and records a small metadata
   raw/                         original immutable phone files
   extracted_frames/            blur-filtered stills per video (extract_frames)
   processed/                   normalized photos + inputs.json hand-off
+  artifacts/v1/                frozen cloud, poses, meshes, and web-ready GLBs
   reconstruction/
     frames/                    selected/normalised images (future worker)
     colmap/<run-id>/           database, sparse model, PLY export
@@ -111,9 +112,21 @@ publish it.
 Implemented now: capture, tokenised resumable uploads, manifests, local Compose,
 the Process job (which normalises photos into `processed/inputs.json` and, via
 `pipeline(videos)`, extracts blur-filtered frames from each video into
-`extracted_frames/`), in-process COLMAP SIFT extraction and exhaustive matching
-via `pycolmap` into `reconstruction/colmap/<run-id>/database.db`, a
-Docker-downloaded COLMAP worker, and sparse reconstruction from JPEG/PNG photos.
+`extracted_frames/`), in-process COLMAP SIFT extraction, exhaustive matching,
+incremental mapping, model analysis, and dense reconstruction via `pycolmap`,
+writing the database to `reconstruction/colmap/<run-id>/database.db`, the sparse
+model to `reconstruction/colmap/<run-id>/sparse/`, and the dense point cloud to
+`reconstruction/colmap/<run-id>/dense/<model-id>/` (`fused.ply` via COLMAP
+patch-match stereo when `pycolmap` has CUDA, otherwise `scene_dense.ply` via an
+OpenMVS CPU fallback; dense is skipped only when neither backend is available),
+freezing the first dense result into `artifacts/v1/` as `fused.ply` plus a
+`poses/` COLMAP TXT export, cleaning that cloud into `artifacts/v1/cleaned.ply`
+(statistical and radius outlier removal, then voxel downsampling), aligning it to
+its dominant plane as `artifacts/v1/aligned.ply`, building a Poisson triangle mesh
+at `artifacts/v1/mesh.ply`, splitting it into full-detail `visual.ply` and
+simplified `collision.ply`, exporting them as `artifacts/v1/scene.glb` and
+`artifacts/v1/collision.glb`, a Docker-downloaded COLMAP worker, and sparse
+reconstruction from JPEG/PNG photos.
 Not implemented yet: dense/photorealistic rendering, a 3D viewer, POIs,
 navmesh/pathfinding, job orchestration, AR, and public hosting. Those are separate
 future decisions; hosting is intentionally deferred.

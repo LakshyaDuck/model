@@ -17,9 +17,9 @@ Declared dependencies (resolved in `backend/uv.lock`, installed into
 | `pillow` | `>=11.0.0` | Photo thumbnails |
 | `opencv-python` | `>=4.10.0` | Image normalisation and frame handling |
 | `numpy` | `>=2.0` | Explicit array base for image/geometry work (also a transitive dep) |
-| `open3d` | `>=0.20.0` | Geometry processing for reconstruction/rendering stages |
+| `open3d` | `>=0.20.0` | Point-cloud cleaning/alignment, Poisson meshing, and mesh simplification |
 | `trimesh` | `>=5.1.1` | Mesh loading, inspection, and export for reconstruction stages |
-| `pycolmap` | `>=4.2.1` | COLMAP feature extraction and exhaustive matching (bundled COLMAP) |
+| `pycolmap` | `>=4.2.1` | COLMAP feature extraction, matching, mapping, and model analysis; dense patch-match needs a CUDA build |
 
 Dev group (`uv sync --group dev`):
 
@@ -43,6 +43,12 @@ ipython); the API image grows accordingly.
 | `uv` | `backend/Dockerfile` (`ghcr.io/astral-sh/uv:0.12.10`) | Dependency install in the image |
 | `tusd` | Not on distro PATH; its own image in `compose.yaml` | Resumable mobile uploads |
 | `COLMAP` | `colmap/colmap` image, `reconstruction` profile | Sparse reconstruction worker |
+| `InterfaceCOLMAP`, `DensifyPointCloud` | Host `PATH` (OpenMVS; not installed by `backend/Dockerfile`) | CPU dense fallback when `pycolmap` lacks CUDA |
+
+OpenMVS is optional. When its tools are on `PATH`, dense reconstruction falls back
+to it on the CPU instead of being skipped. The API image does not install OpenMVS
+yet, so `docker compose` runs remain sparse-only unless the tools are added there
+(or dense is moved to a separate worker).
 
 ## Frontend (`frontend/package.json`)
 

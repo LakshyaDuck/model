@@ -2,7 +2,7 @@
 
 ``match_features`` is importable and has no import-time side effects. It runs
 exhaustive matching over the SIFT features already stored in the COLMAP database.
-``processing.pipeline`` calls it after ``extract_features``.
+``run.pipeline`` calls it after ``extract_features``.
 """
 
 from __future__ import annotations

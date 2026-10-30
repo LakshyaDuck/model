@@ -20,14 +20,29 @@ src/backend/
   events.py      in-process pub/sub per session
   manifest.py    atomic manifest.json writer
   media.py       sha256, safe extensions, thumbnails (ffmpeg / Pillow)
-  processing.py  Process job: normalizes photos into processed/inputs.json and
-                 runs pipeline() (owner hook) over the session's videos
-  extract_frames.py  blur-filtered frame extraction for one video (Laplacian
-                     variance, CSV report) -> extracted_frames/
-  feature_extraction.py  COLMAP SIFT extraction over extracted frames -> database.db
-  feature_matching.py    COLMAP exhaustive matching over that database
+  processing.py  Process job manager: normalizes photos into processed/inputs.json
+                 and runs pipeline.run over the session's videos
+  pipeline/      reconstruction pipeline: shared paths, photo prep, and stages
+    __init__.py            public pipeline API
+    paths.py               session directory layout shared by the job and stages
+    prepare.py             photo normalization -> processed/images
+    run.py                 pipeline() orchestration + PIPELINE_DONE
+    extract_frames.py      blur-filtered frame extraction for one video (Laplacian
+                           variance, CSV report) -> extracted_frames/
+    feature_extraction.py  COLMAP SIFT extraction over extracted frames -> database.db
+    feature_matching.py    COLMAP exhaustive matching over that database
+    mapper.py              COLMAP incremental mapping -> sparse model directories
+    model_analyzer.py      model statistics for a sparse model (model_analyzer CLI)
+    dense_reconstruction.py COLMAP dense (CUDA) or OpenMVS CPU fallback -> point cloud
+    freeze.py              versioned artifact export -> artifacts/v1/{fused.ply,poses/}
+    clean_point_cloud.py   outlier removal + voxel downsample -> artifacts/v1/cleaned.ply
+    align.py               plane segmentation + rotation to +Z -> artifacts/v1/aligned.ply
+    mesh.py                Poisson surface reconstruction -> artifacts/v1/mesh.ply
+    split.py               visual/collision meshes -> artifacts/v1/{visual,collision}.ply
+    export.py              web-ready GLBs -> artifacts/v1/{scene,collision}.glb
 dev_pages/       DEV ONLY throwaway laptop + phone pages
-scripts/         dev.py — one-command local API+tusd stack; simulate_upload.py — phone-less upload
+scripts/         dev.py — one-command local API+tusd stack; simulate_upload.py — phone-less
+                 upload; reconstruct.sh — on-demand COLMAP reconstruction worker
 tests/           pytest
 ```
 
