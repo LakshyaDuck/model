@@ -30,8 +30,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), ...(useHttps ? [mkcert()] : [])],
   server: {
     host: true,
+    headers: { 'Cache-Control': 'no-store' },
     proxy: {
       '/api': { target: API_TARGET, changeOrigin: false },
+      // The backend health route is /healthz; keep it same-origin in development.
+      '/healthz': { target: API_TARGET, changeOrigin: false },
       '/files': { target: TUSD_TARGET, changeOrigin: false, configure: forwardProxyHeaders },
     },
   },

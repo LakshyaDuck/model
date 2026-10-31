@@ -153,7 +153,8 @@ Never enable `-hooks-dir` or `-hooks-grpc`: tusd supports exactly one hook handl
 | --- | --- | --- |
 | `/files/*` | tusd | tus protocol only: `POST`, `HEAD`, `PATCH`, `DELETE`, `OPTIONS`. |
 | `/api/*` | API | |
-| `/m/*` | API | Phone page; renders the pair token into the upload UI. |
+| `/m/*` | Frontend | Phone scanner SPA route produced by `phone_url` (`/m/<pair-token>`). |
+| `/phone/*` | Frontend | Compatibility alias for the same scanner route. |
 | `/dev/*` | API | DEV ONLY throwaway laptop page. Drop this route once the real frontend exists. |
 | `/healthz` | API | |
 | `/internal/*` | **blocked** | tusd hook receiver. Must never be reachable from outside the compose network. tusd reaches it by container name, not through the proxy. |

@@ -20,10 +20,9 @@
 		reverse_proxy api:8000
 	}
 
-	# Retains compatibility with the existing backend's development phone page.
-	handle /m/* {
-		reverse_proxy api:8000
-	}
+	# Phone pairing URLs are frontend routes: PUBLIC_BASE_URL/m/<pair-token> must
+	# reach the React scanner, and /phone/<pair-token> is the compatibility alias.
+	# The backend dev page at /m/<token> stays available on the direct API port.
 
 	handle /healthz {
 		reverse_proxy api:8000

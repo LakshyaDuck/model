@@ -15,8 +15,13 @@ docker compose up --build
 ```
 
 For phone capture, change `PUBLIC_BASE_URL` in `.env` to the laptop's reachable LAN
-address (for example `http://192.168.1.20:8080`) before starting the stack. A phone
-cannot open a QR code pointing at `localhost`.
+address (for example `http://192.168.1.20:8080`) before starting the stack. This is
+the origin of the React app — the pairing URL is `PUBLIC_BASE_URL/m/<pair-token>`. A
+phone cannot open a QR code pointing at `localhost`.
+
+When running the frontend with `npm run dev` (Vite on port 5173) instead of Docker,
+set `PUBLIC_BASE_URL` to the Vite origin, for example
+`http://192.168.1.20:5173`. Vite already listens on all interfaces.
 
 The COLMAP worker is intentionally on demand. After a session has at least two JPEG
 or PNG photos, run:

@@ -59,16 +59,38 @@ def wait_for(url: str, timeout: float = 20.0) -> bool:
 
 
 def detect_lan_ip() -> str | None:
-    """The address of the interface on the default route — what a phone on the same
-    network (or on this machine's hotspot) can reach. None if it cannot be determined."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    """Pick an IPv4 address a phone on the same network can reach.
+
+    The default-route socket often reports a virtual adapter (Hyper-V/WSL/Docker),
+    so prefer real private LAN ranges (192.168.x / 10.x) and never return
+    loopback or link-local addresses.
+    """
+    candidates: list[str] = []
     try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.connect(("8.8.8.8", 80))
-        return sock.getsockname()[0]
-    except OSError:
-        return None
-    finally:
+        candidates.append(sock.getsockname()[0])
         sock.close()
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip not in candidates:
+                candidates.append(ip)
+    except socket.gaierror:
+        pass
+
+    usable = [
+        ip for ip in candidates
+        if not ip.startswith("127.") and not ip.startswith("169.254.")
+    ]
+    preferred = [ip for ip in usable if ip.startswith("192.168.") or ip.startswith("10.")]
+    if preferred:
+        return preferred[0]
+    if usable:
+        return usable[0]
+    return None
 
 
 def main() -> int:

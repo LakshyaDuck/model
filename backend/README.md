@@ -50,6 +50,69 @@ tests/           pytest
 Deploy details (env vars, tusd flags, proxy routing, volume layout) are in
 [DEPLOY.md](DEPLOY.md).
 
+## Configure the environment (Windows PowerShell)
+
+The backend reads `backend/.env` automatically at startup. Variables already set in
+the operating system or deployment environment override the file, so Docker and PaaS
+injection keep working unchanged.
+
+```powershell
+cd backend
+uv sync
+Copy-Item .env.example .env
+```
+
+Open `backend\.env` and fill in the three required values.
+
+**`PUBLIC_BASE_URL`** — the origin the phone can reach, i.e. the address where you
+open the **frontend**, not the API. The pairing URL is
+`PUBLIC_BASE_URL/m/<pair-token>` and the React app serves that route. Find the
+laptop's LAN IPv4 address on the same Wi-Fi/hotspot as the phone:
+
+```powershell
+ipconfig
+```
+
+Use the `IPv4 Address` of the active Wi-Fi or Ethernet adapter with the frontend
+port. For the Vite dev server:
+
+```env
+PUBLIC_BASE_URL=http://192.168.1.20:5173
+```
+
+For the Docker stack use the gateway port (`8080`) instead. Pointing this at the
+API port (`8000`) produces a QR code for a page that is not the scanner.
+
+`localhost` only works on the laptop itself; a phone cannot reach it. If the phone
+cannot open the page, allow inbound TCP port 5173 (Vite) or 8080 (Docker) through
+Windows Firewall.
+
+**`HOOK_SECRET`** — generate a random URL-safe secret and paste it after `HOOK_SECRET=`:
+
+```powershell
+uv run python -c "import secrets; print(secrets.token_hex(24))"
+```
+
+Do not use a base64 value: `+` and `=` are corrupted in the tusd hook query string.
+An empty or short secret stops startup with an explanatory error.
+
+**`DATA_DIR`** — where uploads and sessions are stored. A relative path is resolved
+from the directory you run uvicorn in; start from `backend\`, so `DATA_DIR=./data`
+means `backend\data`. An absolute path such as `D:\namma-data` also works.
+
+`.env` is gitignored and must never contain committed production secrets. In Docker,
+set the same variables in the deployment environment instead.
+
+Start the API (leave the terminal running):
+
+```powershell
+uv run uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000 --app-dir src
+```
+
+Check <http://localhost:8000/healthz>. If configuration is missing or invalid, startup
+fails with a list of every offending variable rather than a traceback from a random
+request later.
+
 ## Run locally
 
 Needs `ffmpeg` on `PATH` for video thumbnails, plus a running `tusd` for real uploads.

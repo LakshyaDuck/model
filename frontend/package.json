@@ -18,6 +18,7 @@
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.4",
     "tailwindcss": "^4.3.3",
+    "three": "^0.187.0",
     "tus-js-client": "^4.3.1"
   },
   "devDependencies": {

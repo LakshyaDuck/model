@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import * as tus from 'tus-js-client'
-import { checkPair, tusEndpoint } from '../api.js'
+import { checkPair, PairError, tusEndpoint } from '../api.js'
 
 const GUESS = {
   mov: 'video/quicktime', mp4: 'video/mp4', webm: 'video/webm', m4v: 'video/x-m4v',
@@ -38,7 +38,9 @@ function Phone() {
         if (!cancelled) setPair(session)
       })
       .catch((err) => {
-        if (!cancelled) setPairError(err.reason || 'invalid')
+        if (cancelled) return
+        if (err instanceof PairError) setPairError(err.reason)
+        else setPairError('unreachable')
       })
     return () => {
       cancelled = true
@@ -94,7 +96,9 @@ function Phone() {
         <p className="text-pink-200 max-w-sm">
           {pairError === 'expired'
             ? 'This QR code has expired. Close this page and scan the new one on the laptop.'
-            : 'This QR code is not valid. Scan the code currently shown on the laptop.'}
+            : pairError === 'unreachable'
+              ? 'Can’t reach the laptop right now. Check that both devices are on the same network and try again.'
+              : 'This QR code is not valid. Scan the code currently shown on the laptop.'}
         </p>
       </div>
     )
@@ -164,7 +168,12 @@ function Phone() {
 
       <div className="w-full max-w-md mt-8 space-y-2">
         {items.map((item) => (
-          <div key={item.id} className="bg-white/10 rounded-lg p-3">
+          <div
+            key={item.id}
+            data-upload-kind={item.kind}
+            data-upload-state={item.state}
+            className="bg-white/10 rounded-lg p-3"
+          >
             <div className="flex justify-between text-xs">
               <span className="truncate mr-2">{item.kind}: {item.name}</span>
               <span className={item.state === 'error' ? 'text-red-300' : 'text-pink-200'}>

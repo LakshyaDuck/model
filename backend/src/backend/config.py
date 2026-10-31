@@ -1,4 +1,9 @@
-"""Settings come from the environment only and are validated once at startup."""
+"""Settings come from the environment and the optional `backend/.env`, validated at startup.
+
+Values supplied by the operating system or deployment environment always win over
+the `.env` file, so Docker/PaaS configuration cannot be accidentally overridden by a
+developer's local file.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from dotenv import dotenv_values
+
+# Resolved from this file, not the current working directory: `backend/.env` is found
+# whether uvicorn is started from `backend/`, the repo root, or another directory.
+DEFAULT_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 DEFAULT_PAIR_TOKEN_TTL_MIN = 30
 DEFAULT_MAX_UPLOAD_BYTES = 5 * 1024**3  # 5 GB
@@ -62,8 +73,30 @@ class Settings:
         self.tus_dir.chmod(0o777)
 
 
-def load_settings(env: Mapping[str, str] | None = None) -> Settings:
-    env = os.environ if env is None else env
+def _read_environment(env_file: Path | str | None) -> Mapping[str, str]:
+    """Merge the `.env` file with the real environment, with the environment winning.
+
+    `dotenv_values` is used instead of `load_dotenv` so this function never mutates
+    `os.environ` (which would leak test values into unrelated code) and so precedence
+    is explicit. `dotenv_values` still handles quotes, comments, and `${VAR}`
+    interpolation like the usual loader.
+    """
+    path = DEFAULT_ENV_FILE if env_file is None else Path(env_file).expanduser()
+    file_values = {key: value for key, value in dotenv_values(path).items() if value is not None}
+    return {**file_values, **os.environ}
+
+
+def load_settings(
+    env: Mapping[str, str] | None = None,
+    *,
+    env_file: Path | str | None = None,
+) -> Settings:
+    """Build validated settings from `env`, or from `.env` + the process environment.
+
+    Passing `env` explicitly bypasses `.env` entirely, which is what tests and
+    callers that already resolved configuration should use.
+    """
+    env = _read_environment(env_file) if env is None else env
     errors: list[str] = []
 
     def require(key: str, example: str) -> str:
@@ -137,5 +170,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     )
 
     if errors:
-        raise ConfigError("invalid configuration:\n  - " + "\n  - ".join(errors))
+        raise ConfigError(
+            "invalid configuration:\n  - "
+            + "\n  - ".join(errors)
+            + "\nSet these in the environment or in backend/.env "
+            "(copy backend/.env.example to backend/.env to get started)."
+        )
     return settings
