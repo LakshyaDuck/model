@@ -17,6 +17,7 @@ from .config import Settings
 from .events import KEEPALIVE_SECONDS, SNAPSHOT
 from .manifest import manifest_payload, write_manifest
 from .models import Asset, CaptureSession, iso, utcnow
+from .pipeline import COLLISION_FILENAME, SCENE_FILENAME, artifacts_dir
 from .security import (
     PAIR_EXPIRED,
     bearer_token,
@@ -144,6 +145,32 @@ async def get_processing(
 ) -> dict:
     settings: Settings = request.app.state.settings
     return request.app.state.processing.status(settings, session_id)
+
+
+def _session_model(request: Request, session_id: str, filename: str) -> FileResponse:
+    settings: Settings = request.app.state.settings
+    path = artifacts_dir(settings, session_id) / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="model is not ready")
+    return FileResponse(path, media_type="model/gltf-binary", filename=filename)
+
+
+@router.get("/sessions/{session_id}/model")
+async def get_session_model(
+    session_id: str,
+    request: Request,
+    _: CaptureSession = Depends(require_owner(allow_query_token=True)),
+) -> FileResponse:
+    return _session_model(request, session_id, SCENE_FILENAME)
+
+
+@router.get("/sessions/{session_id}/model/collision")
+async def get_session_collision_model(
+    session_id: str,
+    request: Request,
+    _: CaptureSession = Depends(require_owner(allow_query_token=True)),
+) -> FileResponse:
+    return _session_model(request, session_id, COLLISION_FILENAME)
 
 
 @router.get("/sessions/{session_id}/events")

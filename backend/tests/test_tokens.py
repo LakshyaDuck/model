@@ -42,7 +42,7 @@ def test_owner_token_is_required(client, new_session, owner_headers):
 
 
 def test_query_token_is_not_accepted_on_the_manifest(client, new_session):
-    """Only events and media endpoints take ?token=; everything else needs a header."""
+    """Only events, media, and model endpoints take ?token=; everything else needs a header."""
     assert client.get(
         f"/api/sessions/{new_session['session_id']}/manifest?token={new_session['owner_token']}"
     ).status_code == 401

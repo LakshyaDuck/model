@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Namma Space Capture API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Source of truth for the public browser-to-capture-service boundary.
     Update this contract with any public API change and keep frontend/src/api.js
@@ -20,6 +20,8 @@ tags:
     description: Read uploaded session files and thumbnails.
   - name: processing
     description: Start and observe preparation of uploaded media.
+  - name: models
+    description: Download processed web-ready scene meshes.
 
 paths:
   /api/sessions:
@@ -126,6 +128,64 @@ paths:
                 $ref: "#/components/schemas/ProcessingJob"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/sessions/{session_id}/model:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/OwnerTokenQuery"
+    get:
+      tags: [models]
+      operationId: getSessionModel
+      summary: Download the session's web-ready scene GLB
+      description: |
+        Returns `scene.glb`, the full-detail visual mesh with vertex colours when
+        available. Authenticate with an OwnerToken bearer header or the `token`
+        query parameter. The file exists only after processing has produced
+        `artifacts/v1/scene.glb`.
+      security:
+        - ownerToken: []
+        - ownerTokenQuery: []
+      responses:
+        "200":
+          description: Scene GLB.
+          content:
+            model/gltf-binary:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ModelNotFound"
+
+  /api/sessions/{session_id}/model/collision:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/OwnerTokenQuery"
+    get:
+      tags: [models]
+      operationId: getSessionCollisionModel
+      summary: Download the session's simplified collision GLB
+      description: |
+        Returns `collision.glb`, the simplified mesh intended for collision and
+        navigation. Authenticate with an OwnerToken bearer header or the `token`
+        query parameter. The file exists only after processing has produced
+        `artifacts/v1/collision.glb`.
+      security:
+        - ownerToken: []
+        - ownerTokenQuery: []
+      responses:
+        "200":
+          description: Collision GLB.
+          content:
+            model/gltf-binary:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ModelNotFound"
 
   /api/sessions/{session_id}/events:
     parameters:
@@ -372,6 +432,8 @@ components:
         - message
         - output_dir
         - inputs_file
+        - model_path
+        - collision_model_path
         - started_at
         - finished_at
         - error
@@ -400,6 +462,12 @@ components:
         inputs_file:
           type: string
           description: Path relative to DATA_DIR, present after successful processing.
+        model_path:
+          type: string
+          description: Path relative to DATA_DIR for scene.glb, empty until it exists.
+        collision_model_path:
+          type: string
+          description: Path relative to DATA_DIR for collision.glb, empty until it exists.
         started_at:
           type: string
           format: date-time
@@ -451,3 +519,11 @@ components:
             $ref: "#/components/schemas/Error"
           example:
             detail: no such asset
+    ModelNotFound:
+      description: The processed model is not ready for this session.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            detail: model is not ready

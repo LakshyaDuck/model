@@ -42,7 +42,8 @@ src/backend/
     export.py              web-ready GLBs -> artifacts/v1/{scene,collision}.glb
 dev_pages/       DEV ONLY throwaway laptop + phone pages
 scripts/         dev.py — one-command local API+tusd stack; simulate_upload.py — phone-less
-                 upload; reconstruct.sh — on-demand COLMAP reconstruction worker
+                 upload; reconstruct.sh — on-demand COLMAP reconstruction worker;
+                 condition_checker.py — tail/parse pipeline stage logs
 tests/           pytest
 ```
 
@@ -113,10 +114,41 @@ No server or network needed: hooks are driven by posting real tusd hook payloads
 the SSE tests run the app in a real uvicorn server on an ephemeral port because
 `TestClient` buffers whole response bodies and would never see an event stream finish.
 
-Covered: token hashing and expiry, pair-token rotation invalidating the old token,
+Covered: pipeline stage log emission and the condition-checker log parser, token
+hashing and expiry, pair-token rotation invalidating the old token,
 pre-create rejections (bad token, expired token, bad kind, too large, too many assets),
 post-finish storage/hashing/thumbnailing/idempotency/out-of-order delivery,
-post-terminate cleanup, atomic manifest writes, and snapshot-then-live SSE ordering.
+post-terminate cleanup, atomic manifest writes, snapshot-then-live SSE ordering, and
+owner-token GLB serving.
+
+## Pipeline logs
+
+Every pipeline stage writes one structured line, so a failed run is diagnosable
+without opening the database:
+
+```
+pipeline stage=mesh status=start session=<id> model=0
+pipeline stage=mesh status=ok session=<id> elapsed_ms=1234 model=0
+pipeline stage=dense status=skipped session=<id> reason=no_backend model=0
+```
+
+Tail a live stack and show a compact timeline:
+
+```sh
+# from the repo root
+docker compose logs -f api | python3 backend/scripts/condition_checker.py --session <id>
+
+# or let the checker run compose itself
+cd backend && uv run python scripts/condition_checker.py --compose --session <id>
+
+# or inspect a saved log
+cd backend && uv run python scripts/condition_checker.py --file /tmp/api.log
+```
+
+The checker ignores unrelated log lines, filters by session, prints `START`/`OK`/
+`SKIP`/`FAILED` per stage, and exits non-zero when a stage fails or starts but never
+finishes. It also warns when `pipeline` reports `ok` without an `export` stage, which
+means the run produced no GLB.
 
 ## Simulating an upload without a phone
 
@@ -144,8 +176,9 @@ the folder and the two routes in `main.py` when the real frontend lands.
 
 ## API
 
-Owner token: `Authorization: Bearer <token>`. The `events` and `.../file`/`.../thumb`
-endpoints also accept `?token=` because `EventSource` and media tags cannot set headers.
+Owner token: `Authorization: Bearer <token>`. The `events`, `.../file`, `.../thumb`,
+and `.../model` endpoints also accept `?token=` because `EventSource`, media tags, and
+model loaders cannot set headers.
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
@@ -156,6 +189,8 @@ endpoints also accept `?token=` because `EventSource` and media tags cannot set 
 | GET | `/api/sessions/{id}/events` | owner | SSE: `snapshot`, then `asset.created/stored/ready/failed/removed`, keep-alive comment every 15 s. |
 | GET | `/api/sessions/{id}/process` | owner | Latest processing job status (`idle` when there is none). |
 | POST | `/api/sessions/{id}/process` | owner | Start processing the session's photos/videos; returns `202` and the job. |
+| GET | `/api/sessions/{id}/model` | owner | `scene.glb` (`model/gltf-binary`), 404 until processing produces it. |
+| GET | `/api/sessions/{id}/model/collision` | owner | `collision.glb` (`model/gltf-binary`), 404 until processing produces it. |
 | GET | `/api/sessions/{id}/assets/{asset_id}/file` | owner | Raw file, supports Range so videos seek. |
 | GET | `/api/sessions/{id}/assets/{asset_id}/thumb` | owner | JPEG thumbnail, 404 when there is none. |
 | POST | `/internal/tusd-hook` | `HOOK_SECRET` | tusd hook receiver. Never expose it. |

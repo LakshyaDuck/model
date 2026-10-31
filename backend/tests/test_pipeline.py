@@ -6,6 +6,7 @@ path helpers, photo preparation, and Open3D stages fast and deterministic.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import cv2
@@ -180,3 +181,33 @@ def test_align_point_cloud_makes_dominant_plane_up(tmp_path):
 
     assert output == tmp_path / "aligned.ply"
     assert normal[2] > 0.99
+
+
+def test_pipeline_emits_stage_logs(settings):
+    messages: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    capture = Capture()
+    logger = logging.getLogger("backend.pipeline.run")
+    previous_level = logger.level
+    previous_propagate = logger.propagate
+    logger.addHandler(capture)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    try:
+        assert pipeline([], settings=settings, session_id="session-logs") == PIPELINE_DONE
+    finally:
+        logger.removeHandler(capture)
+        logger.setLevel(previous_level)
+        logger.propagate = previous_propagate
+
+    lines = "\n".join(messages)
+    assert "pipeline stage=pipeline status=start session=session-logs" in lines
+    assert (
+        "pipeline stage=frames status=skipped session=session-logs "
+        "reason=no_frames_extracted"
+    ) in lines
+    assert "pipeline stage=pipeline status=ok session=session-logs" in lines

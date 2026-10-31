@@ -125,8 +125,13 @@ freezing the first dense result into `artifacts/v1/` as `fused.ply` plus a
 its dominant plane as `artifacts/v1/aligned.ply`, building a Poisson triangle mesh
 at `artifacts/v1/mesh.ply`, splitting it into full-detail `visual.ply` and
 simplified `collision.ply`, exporting them as `artifacts/v1/scene.glb` and
-`artifacts/v1/collision.glb`, a Docker-downloaded COLMAP worker, and sparse
-reconstruction from JPEG/PNG photos.
+`artifacts/v1/collision.glb`, and serving those GLBs as `model/gltf-binary` at
+`GET /api/sessions/{session_id}/model` and `.../model/collision` for the
+Three.js viewer. Every pipeline stage also emits a structured log line
+(`stage=<name>`, `status=<start|ok|failed|skipped>`, `session=<id>`) with elapsed
+time, skip reason, or one-line error; `backend/scripts/condition_checker.py` tails
+those logs and reports the timeline. Also implemented: a Docker-downloaded COLMAP
+worker and sparse reconstruction from JPEG/PNG photos.
 Not implemented yet: dense/photorealistic rendering, a 3D viewer, POIs,
 navmesh/pathfinding, job orchestration, AR, and public hosting. Those are separate
 future decisions; hosting is intentionally deferred.

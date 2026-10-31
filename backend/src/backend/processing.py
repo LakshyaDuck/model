@@ -23,7 +23,10 @@ from .config import Settings
 from .events import JOB_DONE, JOB_FAILED, JOB_PROGRESS, JOB_STARTED
 from .models import READY, STORED, Asset, iso, utcnow
 from .pipeline import (
+    COLLISION_FILENAME,
     PIPELINE_DONE,
+    SCENE_FILENAME,
+    artifacts_dir,
     images_dir,
     inputs_file,
     pipeline,
@@ -57,6 +60,8 @@ class ProcessingJob:
     message: str = ""
     output_dir: str = ""
     inputs_file: str = ""
+    model_path: str = ""
+    collision_model_path: str = ""
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
@@ -67,6 +72,20 @@ class ProcessingJob:
 
 async def _publish(app, session_id: str, event: str, job: ProcessingJob) -> None:
     await app.state.broker.publish(session_id, event, job.snapshot())
+
+
+def _model_paths(settings: Settings, session_id: str) -> dict[str, str]:
+    """Report GLBs relative to DATA_DIR; missing artifacts stay empty."""
+    artifact = artifacts_dir(settings, session_id)
+    paths = {"model_path": "", "collision_model_path": ""}
+    for field, filename in (
+        ("model_path", SCENE_FILENAME),
+        ("collision_model_path", COLLISION_FILENAME),
+    ):
+        path = artifact / filename
+        if path.is_file():
+            paths[field] = relative_to_data(settings, path)
+    return paths
 
 
 class ProcessingManager:
@@ -187,6 +206,8 @@ class ProcessingManager:
             job.phase = "finished"
             job.image_count = len(images)
             job.inputs_file = relative_to_data(settings, inputs_path)
+            for field, value in _model_paths(settings, session_id).items():
+                setattr(job, field, value)
             job.message = (
                 f"{len(images)} images from {len(sources)} uploads"
                 if sources
@@ -218,5 +239,6 @@ class ProcessingManager:
             inputs_file=relative_to_data(settings, inputs),
             finished_at=payload.get("generated_at"),
             message=f"{payload.get('image_count', 0)} images ready",
+            **_model_paths(settings, session_id),
         )
         return job.snapshot()

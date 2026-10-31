@@ -32,6 +32,14 @@ export const fileUrl = (sessionId, assetId, ownerToken) =>
 export const thumbUrl = (sessionId, assetId, ownerToken) =>
   withToken(`/api/sessions/${sessionId}/assets/${assetId}/thumb`, ownerToken)
 
+// GLB URLs for Three.js GLTFLoader; the owner token rides in the query because
+// loader requests do not share the app's Authorization header.
+export const modelUrl = (sessionId, ownerToken) =>
+  withToken(`/api/sessions/${sessionId}/model`, ownerToken)
+
+export const collisionModelUrl = (sessionId, ownerToken) =>
+  withToken(`/api/sessions/${sessionId}/model/collision`, ownerToken)
+
 // Process-button: starts/fetches the OpenCV pass over a session's photos + videos.
 // Owner-token endpoints, so the token rides in the Authorization header.
 export async function startProcessing(sessionId, ownerToken) {

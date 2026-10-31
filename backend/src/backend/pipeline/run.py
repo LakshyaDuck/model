@@ -8,6 +8,9 @@ The Process job hands it every video in the session and treats its
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from time import perf_counter
 
 from ..config import Settings
 from ..models import utcnow
@@ -37,6 +40,57 @@ logger = logging.getLogger(__name__)
 # The only return value pipeline() is allowed to produce. The job runner treats
 # this as the "finished" signal and keys off nothing else.
 PIPELINE_DONE = {"status": "done"}
+
+
+def _fields(**values: object) -> str:
+    return " ".join(f"{key}={value}" for key, value in values.items())
+
+
+def _one_line(value: object) -> str:
+    return str(value).replace("\r", " ").replace("\n", " ")
+
+
+@contextmanager
+def _stage(name: str, session_id: str, **fields: object) -> Iterator[None]:
+    """Emit one parseable line for every stage start, finish, or failure."""
+    started = perf_counter()
+    details = f" {_fields(**fields)}" if fields else ""
+    logger.info(
+        "pipeline stage=%s status=start session=%s%s", name, session_id, details
+    )
+    try:
+        yield
+    except Exception as exc:
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        logger.error(
+            "pipeline stage=%s status=failed session=%s elapsed_ms=%d%s error=%s",
+            name,
+            session_id,
+            elapsed_ms,
+            details,
+            _one_line(exc),
+        )
+        raise
+    else:
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        logger.info(
+            "pipeline stage=%s status=ok session=%s elapsed_ms=%d%s",
+            name,
+            session_id,
+            elapsed_ms,
+            details,
+        )
+
+
+def _skipped(name: str, session_id: str, reason: str, **fields: object) -> None:
+    details = f" {_fields(**fields)}" if fields else ""
+    logger.warning(
+        "pipeline stage=%s status=skipped session=%s reason=%s%s",
+        name,
+        session_id,
+        reason,
+        details,
+    )
 
 
 def pipeline(videos: list[dict], *, settings: Settings, session_id: str) -> dict:
@@ -72,61 +126,88 @@ def pipeline(videos: list[dict], *, settings: Settings, session_id: str) -> dict
     returned value is the job-completion signal and must stay exactly
     ``PIPELINE_DONE``; the job runner treats any other value as a failure.
     """
-    frames_dir = extracted_frames_dir(settings, session_id)
-    extracted = 0
-    for video in videos:
-        source = settings.data_dir / video["stored_path"]
-        if not source.is_file():
-            logger.warning("video missing on disk, skipping: %s", source)
-            continue
-        try:
-            extract_frames(source, frames_dir, prefix=video["asset_id"])
-            extracted += 1
-        except Exception as exc:  # noqa: BLE001 - one bad video must not fail the job
-            logger.warning("frame extraction skipped for %s: %s", source, exc)
+    with _stage("pipeline", session_id):
+        frames_dir = extracted_frames_dir(settings, session_id)
+        extracted = 0
+        for video in videos:
+            source = settings.data_dir / video["stored_path"]
+            if not source.is_file():
+                _skipped(
+                    "frames",
+                    session_id,
+                    "video_missing",
+                    asset_id=video["asset_id"],
+                    path=source,
+                )
+                continue
+            try:
+                with _stage("frames", session_id, asset_id=video["asset_id"]):
+                    extract_frames(source, frames_dir, prefix=video["asset_id"])
+                extracted += 1
+            except Exception as exc:  # noqa: BLE001 - one bad video must not fail the job
+                logger.warning("frame extraction skipped for %s: %s", source, exc)
 
-    if extracted == 0:
-        logger.info("no frames extracted; skipping COLMAP for session %s", session_id)
-        return PIPELINE_DONE
+        if extracted == 0:
+            _skipped("frames", session_id, "no_frames_extracted")
+            return PIPELINE_DONE
 
-    run_id = utcnow().strftime("%Y%m%dT%H%M%SZ")
-    database_path = colmap_run_dir(settings, session_id, run_id) / COLMAP_DATABASE_NAME
-    extract_features(frames_dir, database_path)
-    match_features(database_path)
-    sparse_dir = database_path.parent / SPARSE_DIRNAME
-    run_mapper(database_path, frames_dir, sparse_dir)
-    frozen = False
-    for model_dir in sorted(path for path in sparse_dir.iterdir() if path.is_dir()):
-        analyze_model(model_dir)
-        dense_path = None
-        if dense_available():
-            dense_path = run_dense_reconstruction(
-                frames_dir,
-                model_dir,
-                database_path.parent / DENSE_DIRNAME / model_dir.name,
-            )
-        else:
-            logger.warning(
-                "dense reconstruction skipped for %s: no CUDA-enabled pycolmap "
-                "and no OpenMVS tools on PATH",
-                model_dir,
-            )
-        if dense_path is not None and not frozen:
-            artifact_dir = freeze_artifacts(
-                model_dir,
-                dense_path,
-                artifacts_dir(settings, session_id),
-            )
-            cleaned_path = clean_point_cloud(artifact_dir / POINT_CLOUD_FILENAME)
-            aligned_path = align_point_cloud(cleaned_path)
-            mesh_path = reconstruct_mesh(aligned_path)
-            visual_path, collision_path = split_mesh(mesh_path)
-            export_models(visual_path, collision_path)
-            frozen = True
-
-    if not frozen:
-        logger.warning(
-            "artifacts not frozen for session %s: no dense point cloud was produced",
-            session_id,
+        run_id = utcnow().strftime("%Y%m%dT%H%M%SZ")
+        database_path = (
+            colmap_run_dir(settings, session_id, run_id) / COLMAP_DATABASE_NAME
         )
-    return PIPELINE_DONE
+        with _stage("features", session_id, run_id=run_id):
+            extract_features(frames_dir, database_path)
+        with _stage("matching", session_id, run_id=run_id):
+            match_features(database_path)
+        sparse_dir = database_path.parent / SPARSE_DIRNAME
+        with _stage("mapping", session_id, run_id=run_id):
+            run_mapper(database_path, frames_dir, sparse_dir)
+
+        model_dirs = (
+            sorted(path for path in sparse_dir.iterdir() if path.is_dir())
+            if sparse_dir.is_dir()
+            else []
+        )
+        if not model_dirs:
+            _skipped("mapping", session_id, "no_sparse_models", run_id=run_id)
+
+        frozen = False
+        for model_dir in model_dirs:
+            with _stage("analysis", session_id, model=model_dir.name):
+                analyze_model(model_dir)
+
+            dense_path = None
+            if dense_available():
+                with _stage("dense", session_id, model=model_dir.name):
+                    dense_path = run_dense_reconstruction(
+                        frames_dir,
+                        model_dir,
+                        database_path.parent / DENSE_DIRNAME / model_dir.name,
+                    )
+            else:
+                _skipped("dense", session_id, "no_backend", model=model_dir.name)
+
+            if dense_path is not None and not frozen:
+                with _stage("freeze", session_id, model=model_dir.name):
+                    artifact_dir = freeze_artifacts(
+                        model_dir,
+                        dense_path,
+                        artifacts_dir(settings, session_id),
+                    )
+                with _stage("clean", session_id, model=model_dir.name):
+                    cleaned_path = clean_point_cloud(
+                        artifact_dir / POINT_CLOUD_FILENAME
+                    )
+                with _stage("align", session_id, model=model_dir.name):
+                    aligned_path = align_point_cloud(cleaned_path)
+                with _stage("mesh", session_id, model=model_dir.name):
+                    mesh_path = reconstruct_mesh(aligned_path)
+                with _stage("split", session_id, model=model_dir.name):
+                    visual_path, collision_path = split_mesh(mesh_path)
+                with _stage("export", session_id, model=model_dir.name):
+                    export_models(visual_path, collision_path)
+                frozen = True
+
+        if not frozen:
+            _skipped("artifacts", session_id, "no_dense_point_cloud")
+        return PIPELINE_DONE

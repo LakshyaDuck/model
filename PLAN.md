@@ -39,4 +39,20 @@ and writes `artifacts/v1/mesh.ply`. `split_mesh()` keeps that full-detail mesh a
 `artifacts/v1/visual.ply` and writes a 15,000-triangle Quadric-decimated mesh with
 sub-1% connected clusters removed as `artifacts/v1/collision.ply`. Finally,
 `export_models()` writes `artifacts/v1/scene.glb` (the visual mesh, including
-vertex colours when present) and `artifacts/v1/collision.glb`.
+vertex colours when present) and `artifacts/v1/collision.glb`; the API serves them
+as `model/gltf-binary` at `GET /api/sessions/{session_id}/model` and
+`.../model/collision`.
+
+## Observability
+
+Each stage in `run.py` logs `pipeline stage=<name> status=<start|ok|failed|skipped>
+session=<id> ...`, with `elapsed_ms`, `reason`, or a one-line `error` on terminal
+events. `backend/scripts/condition_checker.py` tails those logs from stdin, Docker
+Compose, or a file, filters by session, and prints a compact timeline:
+
+```sh
+docker compose logs -f api | python3 backend/scripts/condition_checker.py --session <id>
+```
+
+It exits non-zero on failures or unfinished stages and warns when the pipeline ends
+without exporting a GLB.
